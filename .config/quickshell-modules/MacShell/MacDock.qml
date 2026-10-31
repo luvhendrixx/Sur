@@ -543,15 +543,11 @@ Scope {
             { id: "profile",    name: "User",         glyph: "profile",    c1: "#8E8E93", c2: "#636366",
               keys: "user profile avatar picture face account name username lock screen change reset image" },
             { id: "dock",       name: "Dock",         glyph: "dock",       c1: "#4FA8FF", c2: "#0A6CFF",
-              keys: "size icon magnification zoom spacing margin distance edge" },
+              keys: "size icon magnification zoom spacing margin distance edge behaviour behavior hide delay labels tooltip indicators bounce trash trashcan display monitor preview thumbnail applications apps pinned keep reset" },
             { id: "menubar",    name: "Menu Bar",     glyph: "menubar",    c1: "#7D7AFF", c2: "#4B48D6",
               keys: "panel bar height clock date seconds 24 hour battery tray search spotlight week monday style liquid bluetooth widget" },
             { id: "appearance", name: "Appearance",   glyph: "appearance", c1: "#636366", c2: "#1C1C1E",
               keys: "theme dark light mode accent color glass liquid apple style translucency blur corner radius font" },
-            { id: "behavior",   name: "Dock Behavior", glyph: "behavior",  c1: "#4CD964", c2: "#26A844",
-              keys: "hide auto labels tooltip indicators bounce animate trash display monitor delay window preview thumbnail" },
-            { id: "apps",       name: "Applications", glyph: "apps",       c1: "#FFB340", c2: "#FF9500",
-              keys: "pinned apps keep remove reset" },
             { id: "widgets",    name: "Widgets",      glyph: "widgets",    c1: "#FF6482", c2: "#FF375F",
               keys: "desktop widget weather clock calendar player music artwork album glass edit add remove" },
             { id: "reminders",  name: "Reminders",    glyph: "reminders",  c1: "#FFB340", c2: "#FF7A00",
@@ -923,7 +919,7 @@ Scope {
                     x: 22
                     y: 6
                     width: flick.width - 44
-                    sourceComponent: [paneGeneral, paneProfile, paneDock, paneMenuBar, paneAppearance, paneBehavior, paneApps, paneWidgets, paneReminders, paneAbout][prefsWindow.cur]
+                    sourceComponent: [paneGeneral, paneProfile, paneDock, paneMenuBar, paneAppearance, paneWidgets, paneReminders, paneAbout][prefsWindow.cur]
                     onLoaded: fadeIn.restart()
                 }
             }
@@ -1860,11 +1856,28 @@ Scope {
             }
         }
 
-        // ── Dock ──
+        // ── Dock (size & style, behavior, applications — one pane, like macOS) ──
         Component {
             id: paneDock
             Column {
+                id: dockCol
                 spacing: 10
+
+                readonly property int pinCount: root.items.filter(function (i) {
+                    return i.kind === "app" && i.pinned && !i.special;
+                }).length
+
+                // master switch (mirrored from General → Shell so this pane is
+                // self-contained; General keeps its own copy for the quick toggles)
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show the Dock"
+                        subtitle: "Show the Dock at the bottom of the screen"
+                        SSwitch { t: pal; checked: root.dockEnabled; onToggled: v => root.dockEnabled = v }
+                    }
+                }
 
                 // live preview
                 Rectangle {
@@ -1994,6 +2007,133 @@ Scope {
                         }
                     }
                 }
+                // ── Behavior ──
+                SLabel { t: pal; header: true; text: "Behavior" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Automatically hide and show the Dock"
+                        subtitle: root.hideMode === "smart" ? "Hides only while a tiled window needs the space"
+                                : (root.hideMode === "always" ? "Always hidden until the pointer touches the screen edge"
+                                                              : "Always visible and reserves screen space")
+                        SSegmented {
+                            t: pal
+                            model: ["Smart", "Always", "Never"]
+                            segWidth: 64
+                            current: root.hideMode === "smart" ? 0 : (root.hideMode === "always" ? 1 : 2)
+                            onPicked: i => root.hideMode = ["smart", "always", "never"][i]
+                        }
+                    }
+                    SRow {
+                        t: pal
+                        visible: root.hideMode !== "never"
+                        title: "Hide delay"
+                        SSlider {
+                            t: pal
+                            from: 0; to: 1500; stepSize: 50
+                            value: root.hideDelay
+                            leftLabel: "Instant"; rightLabel: "1.5 s"
+                            onMoved: v => root.hideDelay = Math.round(v)
+                        }
+                    }
+                }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show Dock on"
+                        SSegmented {
+                            t: pal
+                            model: ["All Displays", "Primary Only"]
+                            segWidth: 96
+                            current: root.monitor === "" ? 0 : 1
+                            onPicked: i => {
+                                if (i === 0) root.monitor = "";
+                                else if (Quickshell.screens.length > 0) root.monitor = Quickshell.screens[0].name;
+                            }
+                        }
+                    }
+                }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show labels"
+                        subtitle: "Display an app's name when you hover its icon"
+                        SSwitch { t: pal; checked: root.showLabels; onToggled: v => root.showLabels = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show window previews"
+                        subtitle: "Open windows appear as live previews next to the Trash, each with its app's icon"
+                        SSwitch { t: pal; checked: root.showThumbs; onToggled: v => root.showThumbs = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Live window capture"
+                        subtitle: "Capture open windows for the previews. Turn off and the previews show the app icon instead (Liquid Glass is not affected)"
+                        SSwitch { t: pal; checked: root.windowCapture; onToggled: v => root.windowCapture = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show indicators for open applications"
+                        SSwitch { t: pal; checked: root.showIndicators; onToggled: v => root.showIndicators = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Animate opening applications"
+                        subtitle: "Icons bounce while an app is launching"
+                        SSwitch { t: pal; checked: root.bounceOnLaunch; onToggled: v => root.bounceOnLaunch = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show Trash in the Dock"
+                        SSwitch { t: pal; checked: root.showTrash; onToggled: v => root.showTrash = v }
+                    }
+                }
+
+                // ── Applications (kept in Dock) ──
+                SLabel { t: pal; header: true; text: "Applications" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        visible: dockCol.pinCount === 0
+                        title: "No apps are kept in the Dock"
+                        subtitle: "Right-click a running app and choose Keep in Dock."
+                    }
+                    Repeater {
+                        model: root.items
+                        delegate: SRow {
+                            id: appRow
+                            required property var modelData
+                            t: pal
+                            visible: modelData.kind === "app" && modelData.pinned === true && !modelData.special
+                            title: modelData.name || ""
+                            iconSource: modelData.icon ? root.iconSrc(modelData.icon) : ""
+                            SButton {
+                                t: pal
+                                text: "Remove"
+                                onClicked: root.togglePin(appRow.modelData)
+                            }
+                        }
+                    }
+                }
+                SLabel { t: pal; text: "Drag icons in the Dock to reorder them. Pins are saved to ~/.config/macdock/pinned.json." }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Reset Dock Items"
+                        subtitle: "Go back to the default set of apps"
+                        SButton { t: pal; text: "Reset"; onClicked: root.resetPins() }
+                    }
+                }
+
                 SLabel { t: pal; text: "Changes apply to the Dock immediately." }
             }
         }
@@ -2158,150 +2298,6 @@ Scope {
                 SLabel { t: pal; text: root.dockStyle === "liquid"
                                        ? "Liquid Glass refracts the wallpaper and windows behind the Dock in real time. Corner radius also shapes the glass."
                                        : "The blur behind the Dock comes from your Hyprland layer rule; translucency only controls the tint." }
-            }
-        }
-
-        // ── Behavior ──
-        Component {
-            id: paneBehavior
-            Column {
-                spacing: 10
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Automatically hide and show the Dock"
-                        subtitle: root.hideMode === "smart" ? "Hides only while a tiled window needs the space"
-                                : (root.hideMode === "always" ? "Always hidden until the pointer touches the screen edge"
-                                                              : "Always visible and reserves screen space")
-                        SSegmented {
-                            t: pal
-                            model: ["Smart", "Always", "Never"]
-                            segWidth: 64
-                            current: root.hideMode === "smart" ? 0 : (root.hideMode === "always" ? 1 : 2)
-                            onPicked: i => root.hideMode = ["smart", "always", "never"][i]
-                        }
-                    }
-                    SRow {
-                        t: pal
-                        visible: root.hideMode !== "never"
-                        title: "Hide delay"
-                        SSlider {
-                            t: pal
-                            from: 0; to: 1500; stepSize: 50
-                            value: root.hideDelay
-                            leftLabel: "Instant"; rightLabel: "1.5 s"
-                            onMoved: v => root.hideDelay = Math.round(v)
-                        }
-                    }
-                }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Show Dock on"
-                        SSegmented {
-                            t: pal
-                            model: ["All Displays", "Primary Only"]
-                            segWidth: 96
-                            current: root.monitor === "" ? 0 : 1
-                            onPicked: i => {
-                                if (i === 0) root.monitor = "";
-                                else if (Quickshell.screens.length > 0) root.monitor = Quickshell.screens[0].name;
-                            }
-                        }
-                    }
-                }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Show labels"
-                        subtitle: "Display an app's name when you hover its icon"
-                        SSwitch { t: pal; checked: root.showLabels; onToggled: v => root.showLabels = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show window previews"
-                        subtitle: "Open windows appear as live previews next to the Trash, each with its app's icon"
-                        SSwitch { t: pal; checked: root.showThumbs; onToggled: v => root.showThumbs = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Live window capture"
-                        subtitle: "Capture open windows for the previews. Turn off and the previews show the app icon instead (Liquid Glass is not affected)"
-                        SSwitch { t: pal; checked: root.windowCapture; onToggled: v => root.windowCapture = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show indicators for open applications"
-                        SSwitch { t: pal; checked: root.showIndicators; onToggled: v => root.showIndicators = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Animate opening applications"
-                        subtitle: "Icons bounce while an app is launching"
-                        SSwitch { t: pal; checked: root.bounceOnLaunch; onToggled: v => root.bounceOnLaunch = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show Trash in the Dock"
-                        SSwitch { t: pal; checked: root.showTrash; onToggled: v => root.showTrash = v }
-                    }
-                }
-            }
-        }
-
-        // ── Applications ──
-        Component {
-            id: paneApps
-            Column {
-                id: appsCol
-                spacing: 10
-                readonly property int pinCount: root.items.filter(function (i) {
-                    return i.kind === "app" && i.pinned && !i.special;
-                }).length
-
-                SLabel { t: pal; header: true; text: "Kept in Dock" }
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        visible: appsCol.pinCount === 0
-                        title: "No apps are kept in the Dock"
-                        subtitle: "Right-click a running app and choose Keep in Dock."
-                    }
-                    Repeater {
-                        model: root.items
-                        delegate: SRow {
-                            id: appRow
-                            required property var modelData
-                            t: pal
-                            visible: modelData.kind === "app" && modelData.pinned === true && !modelData.special
-                            title: modelData.name || ""
-                            iconSource: modelData.icon ? root.iconSrc(modelData.icon) : ""
-                            SButton {
-                                t: pal
-                                text: "Remove"
-                                onClicked: root.togglePin(appRow.modelData)
-                            }
-                        }
-                    }
-                }
-                SLabel { t: pal; text: "Drag icons in the Dock to reorder them. Pins are saved to ~/.config/macdock/pinned.json." }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Reset Dock Items"
-                        subtitle: "Go back to the default set of apps"
-                        SButton { t: pal; text: "Reset"; onClicked: root.resetPins() }
-                    }
-                }
             }
         }
 
