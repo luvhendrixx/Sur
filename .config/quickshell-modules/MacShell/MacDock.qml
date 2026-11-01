@@ -1724,6 +1724,33 @@ Scope {
                     }
                 }
 
+                SLabel { t: pal; header: true; text: "Hidden Apps" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        visible: !root.bar || !root.bar.spHiddenApps || root.bar.spHiddenApps.length === 0
+                        title: "No apps hidden"
+                        subtitle: "Right-click an app in Spotlight and choose \u201CHide App\u201D."
+                    }
+                    Repeater {
+                        model: root.bar && root.bar.spHiddenApps ? root.bar.spHiddenApps : []
+                        delegate: SRow {
+                            id: hiddenRow
+                            required property var modelData
+                            t: pal
+                            readonly property var entry: root.bar ? root.bar.spEntryById(hiddenRow.modelData) : null
+                            title: entry && entry.name ? entry.name : String(hiddenRow.modelData)
+                            iconSource: entry && entry.icon ? root.iconSrc(entry.icon) : ""
+                            SButton {
+                                t: pal
+                                text: "Show again"
+                                onClicked: if (root.bar) root.bar.spotRestore(hiddenRow.modelData);
+                            }
+                        }
+                    }
+                }
+
                 SCard {
                     t: pal
                     SRow {

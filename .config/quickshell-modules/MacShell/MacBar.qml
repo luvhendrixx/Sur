@@ -113,13 +113,15 @@ Scope {
     property bool showBatteryPercent: true
     property bool showTray: true
     property bool showSearch: true
-    property string webSearchEngine: ""   // optional web-search override: a "?q=" style base URL whose encoded query it appends; "" = hand the search straight to the browser, which uses its own default engine
+    property string webSearchEngine: ""   // optional web-search override: a "?q=" style base URL whose encoded query it appends; "" = the browser's own: Firefox family gets the plain term, URL-based browsers get a built-in DuckDuckGo URL (see browserScript)
     property bool weekStartsMonday: false
     property string terminal: ""              // "" = auto-detect at startup (kitty → ghostty → …, see termProbe); pin a value here or in settings.json to force one
     property string launcher: ""              // "" = built-in Spotlight; set a command (rofi, fuzzel, ...) to use an external launcher instead
     property string filesCmd: "xdg-open \"$HOME\""
     property string clipboardCmd: "cliphist list | (fuzzel --dmenu || wofi --dmenu || rofi -dmenu) | cliphist decode | wl-copy"
     property var appUsage: ({})               // launch counts, feeds the "Suggestions" row in Spotlight
+    property var spHiddenApps: []             // desktop ids the user hid from Spotlight search (right-click an app result)
+    property int spHiddenRev: 0               // bumped on every hide/show so result bindings re-run immediately (belt and braces against binding-tracking lag)
     property bool clipHistory: true           // keep a clipboard history for Spotlight → Clipboard (needs wl-clipboard + cliphist)
     property bool clipAutoPaste: true         // after picking a clipboard entry / emoji, paste it into the focused app
     property var emojiRecent: []              // recently used emoji, newest first
@@ -152,7 +154,7 @@ Scope {
     readonly property var settingKeys: ["barEnabled", "darkMode", "accent", "fontFamily", "barHeight", "glassOpacity",
         "barStyle", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "barBgOpacity", "glassRealtime", "glassDebug", "wallpaperPath", "use24h", "showDate",
         "showSeconds", "showBatteryPercent", "showTray", "showSearch", "webSearchEngine", "barLogoMode", "barCustomLogoPath", "barWidgets", "weekStartsMonday", "terminal", "launcher",
-        "filesCmd", "clipboardCmd", "appUsage", "clipHistory", "clipAutoPaste", "emojiRecent", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
+        "filesCmd", "clipboardCmd", "appUsage", "spHiddenApps", "clipHistory", "clipAutoPaste", "emojiRecent", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
     // Optional bar widgets; tray and Spotlight use their existing showTray/showSearch settings.
     property var barWidgets: ["appleMenu", "appMenus", "volume", "keyboard", "reminders", "notifications", "bluetooth", "privacy", "controlCenter", "clock"]
     function barWidgetEnabled(id) { return barWidgets.indexOf(id) >= 0; }
@@ -1995,12 +1997,20 @@ Scope {
     }
 
     // Hand a web query to the user's browser, so the search runs on the default engine they
-    // already configured. Firefox-family browsers have `--search`; Chromium-family treats a
-    // plain string as a search too; xdg-open is the last resort. A URL opens as-is.
+    // already configured. Firefox-family browsers understand `--search <term>` and get the
+    // plain search term. Chromium-family browsers cannot be told "search this" from the CLI:
+    // they "URL-fix" a bare argument themselves and navigating a one-word query turns it into
+    // `http://<word>/` — a dead, unencrypted URL the browser flags instead of searching
+    // (exactly the broken "Search the web for …" behaviour). So for them the query is resolved
+    // into a real search-engine URL (DuckDuckGo by default) that always parses.
     // (Settings · webSearchEngine still wins when the user set an engine explicitly.)
     readonly property string browserScript: [
         "q=\"$1\"",
         "case \"$q\" in *'://'*|'www.'*) exec xdg-open \"$q\";; esac",
+        "# spot's built-in engine for the URL-building browsers",
+        "enc() { python3 -c 'import sys,urllib.parse;sys.stdout.write(urllib.parse.quote(sys.argv[1]))' \"$1\"; }",
+        "se=\"https://duckduckgo.com/?q=\"",
+        "# the default browser's own desktop entry, if resolvable",
         "b=$(xdg-settings get default-web-browser 2>/dev/null | sed 's/\\.desktop$//')",
         "for d in \"$HOME/.local/share/applications/$b.desktop\" \"${XDG_DATA_HOME:-$HOME/.local/share}/applications/$b.desktop\" /usr/share/applications/$b.desktop /usr/local/share/applications/$b.desktop; do",
         "  [ -r \"$d\" ] || continue",
@@ -2008,14 +2018,15 @@ Scope {
         "  c=${c##*/}",
         "  command -v \"$c\" >/dev/null 2>&1 || continue",
         "  case \"$c\" in *firefox*|*zen*|*librewolf*|*waterfox*|*floorp*) exec \"$c\" --search \"$q\";; esac",
-        "  exec \"$c\" \"$q\"",
+        "  # URL-based browser: give it a well-formed search URL, never a bare term",
+        "  exec \"$c\" \"$se$(enc \"$q\")\"",
         "done",
         "for c in firefox zen-browser zen librewolf waterfox floorp chromium chromium-browser google-chrome chrome vivaldi brave; do",
         "  command -v \"$c\" >/dev/null 2>&1 || continue",
         "  case \"$c\" in *firefox*|*zen*|*librewolf*|*waterfox*|*floorp*) exec \"$c\" --search \"$q\";; esac",
-        "  exec \"$c\" \"$q\"",
+        "  exec \"$c\" \"$se$(enc \"$q\")\"",
         "done",
-        "exec xdg-open \"$q\" 2>/dev/null || true"
+        "exec xdg-open \"$se$(enc \"$q\")\" 2>/dev/null || true"
     ].join("\n")
 
     function webSearch(q) {
@@ -2332,17 +2343,20 @@ Scope {
         return "Utilities";
     }
     readonly property var appSections: {
+        var hidden = root.spHiddenApps;                 // binding-level read: the grid refilters the moment the hidden list changes
         var list = appList, usage = appUsage, i, j;
-        var used = list.filter(function (e) { return (usage[e.id] || 0) > 0; });
+        var used = list.filter(function (e) { return (usage[e.id] || 0) > 0 && hidden.indexOf(String(e.id)) < 0; });
         used.sort(function (a, b) { return (usage[b.id] || 0) - (usage[a.id] || 0); });
         var sug = used.slice(0, 10);
         for (i = 0; i < list.length && sug.length < 5; i++) {
             var dup = false;
+            if (hidden.indexOf(String(list[i].id)) >= 0) continue;              // hidden apps don't get suggested either
             for (j = 0; j < sug.length; j++) if (sug[j].id === list[i].id) { dup = true; break; }
             if (!dup) sug.push(list[i]);
         }
         var map = {};
         for (i = 0; i < list.length; i++) {
+            if (hidden.indexOf(String(list[i].id)) >= 0) continue;              // hidden apps are invisible in the All Apps grid too
             var cat = appCategory(list[i]);
             if (!map[cat]) map[cat] = [];
             map[cat].push(list[i]);
@@ -2353,10 +2367,12 @@ Scope {
     }
     function searchApps(q) {
         q = (q || "").trim().toLowerCase();
+        var hidden = root.spHiddenApps;       // local read of the live list
         if (q === "") return [];
         var list = appList, hits = [];
         for (var i = 0; i < list.length; i++) {
             var e = list[i], n = e.name.toLowerCase(), sc = 0;
+            if (hidden.indexOf(String(e.id)) >= 0) continue;    // hidden from Spotlight via right-click
             if (n === q) sc = 100;
             else if (n.indexOf(q) === 0) sc = 80;
             else if (n.indexOf(" " + q) >= 0) sc = 60;
@@ -2385,11 +2401,50 @@ Scope {
         e.execute();
     }
     function appRunner(e) { return function () { launchApp(e); }; }
+
+    // ── Spotlight right-click menu: Hide App / Pin to Dock ──
+    function spotIsHidden(e) { return root.spHiddenApps.indexOf(String(e.id)) >= 0; }
+    function spotToggleHidden(e) {
+        var id = String(e.id), out = root.spHiddenApps.slice(), p = out.indexOf(id);
+        if (p >= 0) out.splice(p, 1); else out.push(id);
+        root.spHiddenApps = out;
+        root.spHiddenRev++;                   // nudge every binding that read searchApps(): instant re-filter
+        root.saveTimer.restart();
+    }
+    function spotIsPinned(e) {
+        var d = root.hub && root.hub.dock ? root.hub.dock : null;
+        if (!d) return false;
+        var id = String(e.id).replace(/\.desktop$/, "").toLowerCase(), p = (d.pinned || []), i;
+        for (i = 0; i < p.length; i++)
+            if (String(p[i]).replace(/\.desktop$/, "").toLowerCase() === id) return true;
+        return false;
+    }
+    function spotPin(e) {
+        var d = root.hub && root.hub.dock ? root.hub.dock : null;
+        if (!d) return;                       // no dock instantiated: nothing to pin into
+        d.togglePin({ key: String(e.id).replace(/\.desktop$/, "").toLowerCase(), entry: e });
+    }
+    // used by the Settings → Menu Bar → Hidden Apps card (the escape hatch once apps are
+    // invisible everywhere in Spotlight itself)
+    function spotEntryById(id) {
+        var list = appList;
+        for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i];
+        return null;
+    }
+    function spotRestore(id) {
+        var p = root.spHiddenApps.indexOf(String(id));
+        if (p < 0) return;
+        var out = root.spHiddenApps.slice();
+        out.splice(p, 1);
+        root.spHiddenApps = out;
+        root.spHiddenRev++;
+        root.saveTimer.restart();
+    }
     function appItems(q, limit) {
         var r = searchApps(q), out = [];
         for (var i = 0; i < r.length && i < limit; i++)
             out.push({ title: r[i].name, sub: r[i].genericName || "Application", icon: iconSrc(r[i].icon),
-                       glyph: "", confirm: false, run: appRunner(r[i]) });
+                       glyph: "", confirm: false, entry: r[i], run: appRunner(r[i]) });
         return out;
     }
     function actionItems(q) {
@@ -3757,12 +3812,18 @@ Scope {
                 property bool spReqCalm: false
                 property int emCat: 0                   // emoji category tab (0 = recents)
                 property bool spHover: false            // spSel was just changed by the pointer, so lists must not scroll to it
+                property var spMenuEntry: null         // app the Spotlight right-click mini menu is open for; null = menu closed
+                property real spMenuX: 0               // where the menu was opened (spot-local coordinates)
+                property real spMenuY: 0
                 readonly property int emCols: 12
                 readonly property bool spFull: spMode === "apps" || spMode === "clip" || spMode === "emoji"
-                property var spResults: spMode === "actions" ? root.actionItems(spQuery)
-                                        : (spMode === "clip" ? root.clipFiltered(spQuery)
-                                        : (spMode === "emoji" ? root.emojiItems(spQuery, emCat)
-                                        : (spQuery.trim() === "" ? [] : root.homeItems(spQuery))))
+                property var spResults: {
+                    var rev = root.spHiddenRev;   // direct read at binding level: hiding/showing an app re-filters the results instantly
+                    if (spMode === "actions") return root.actionItems(spQuery);
+                    if (spMode === "clip") return root.clipFiltered(spQuery);
+                    if (spMode === "emoji") return root.emojiItems(spQuery, emCat);
+                    return spQuery.trim() === "" ? [] : root.homeItems(spQuery);
+                }
 
                 function spSetMode(m) {
                     spMode = m; spQuery = ""; spHoverLabel = ""; spSel = 0; armed = ""; clipMenu = false;
@@ -3799,7 +3860,7 @@ Scope {
                 }
                 function spKey(ev) {
                     var k = ev.key, n = spResults.length;
-                    if (k === Qt.Key_Escape) { spEscape(); ev.accepted = true; }
+                    if (k === Qt.Key_Escape) { if (ui.spMenuEntry) ui.spMenuEntry = null; else spEscape(); ev.accepted = true; }
                     else if (spMode === "emoji" && (k === Qt.Key_Left || k === Qt.Key_Right || k === Qt.Key_Up || k === Qt.Key_Down)) {
                         var d = k === Qt.Key_Left ? -1 : (k === Qt.Key_Right ? 1 : (k === Qt.Key_Up ? -emCols : emCols));
                         if (n > 0) spSel = Math.max(0, Math.min(n - 1, Math.min(spSel, n - 1) + d));
@@ -3829,6 +3890,15 @@ Scope {
                     for (var k in spExpanded) o[k] = spExpanded[k];
                     o[name] = !o[name];
                     spExpanded = o;
+                }
+                // open the right-click mini menu for an app; the position is the pointer in
+                // fromItem's coordinates, mapped into this item's space for anchoring
+                function spOpenAppMenu(entry, fromItem, fx, fy) {
+                    if (!entry) return;
+                    var p = fromItem.mapToItem(spot, fx, fy);
+                    ui.spMenuEntry = entry;
+                    ui.spMenuX = p.x;
+                    ui.spMenuY = p.y;
                 }
                 // gutter for check marks when any entry of the open menu has one
                 readonly property bool menuLead: {
@@ -3865,6 +3935,7 @@ Scope {
                     if (pop === "wifi") { root.wifiError = ""; root.scanWifi(); root.refreshConnections(); }
                     if (pop === "spot") {
                         spMode = "home"; spQuery = ""; spSel = 0; spExpanded = ({}); clipMenu = false;
+                        spMenuEntry = null;
                         spInput.text = ""; appsInput.text = ""; clipInput.text = ""; emojiInput.text = "";
                         spFocusTimer.restart();
                     }
@@ -8184,12 +8255,96 @@ Scope {
                                     MouseArea {
                                         anchors.fill: parent
                                         hoverEnabled: true
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         onEntered: ui.spSel = rr.index
-                                        onClicked: ui.spActivate(rr.index)
+                                        onClicked: mouse => {
+                                            if (mouse.button === Qt.RightButton) {
+                                                ui.spSel = rr.index;
+                                                // right-click on an app result: the little macOS options menu
+                                                ui.spOpenAppMenu(rr.modelData.entry, rr, mouse.x, mouse.y);
+                                            } else ui.spActivate(rr.index);
+                                        }
                                     }
                                 }
                             }
                         }
+                        }
+                    }
+
+                    // ── right-click mini menu on an app result (the macOS options menu) ──
+                    // Small warm-glass popup anchored at the pointer, reusing the panels'
+                    // glass (gx: spg) and the Spotlight palette. Hide App only excludes the
+                    // app from Spotlight *search* (it stays installed & launchable — the
+                    // Applications panel still lists it, where the menu offers "Show App");
+                    // Pin to Dock talks to the dock's own pinned list.
+                    Item {
+                        id: spMenu
+                        z: 30
+                        readonly property bool open: ui.spMenuEntry !== null
+                        width: 212
+                        height: 12 + spMenuCol.height
+                        x: Math.max(8, Math.min(spot.width - width - 8, ui.spMenuX - width + 26))
+                        y: Math.max(8, Math.min(spot.height - height - 8, ui.spMenuY + 6))
+                        opacity: open ? 1 : 0
+                        scale: open ? 1 : 0.9
+                        transformOrigin: Item.TopLeft
+                        Behavior on opacity { NumberAnimation { duration: 90 } }
+                        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                        GGlass { anchors.fill: parent; gx: spg; outline: true; cornerR: 14; thickness: 22; strengthMul: 0.55; shadowAmt: 0.5 }
+                        Column {
+                            id: spMenuCol
+                            x: 6; y: 6
+                            width: parent.width - 12
+                            Repeater {
+                                model: spMenu.open ? [
+                                    { label: ui.spMenuEntry && root.spotIsHidden(ui.spMenuEntry) ? "Show App" : "Hide App",
+                                      run: function (e) { if (e) root.spotToggleHidden(e); } },
+                                    { label: ui.spMenuEntry && root.spotIsPinned(ui.spMenuEntry) ? "Remove from Dock" : "Pin to Dock",
+                                      run: function (e) { if (e) root.spotPin(e); } }
+                                ] : []
+                                delegate: Item {
+                                    id: smi
+                                    required property var modelData
+                                    width: spMenuCol.width
+                                    height: 26
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 6
+                                        color: sma.containsMouse ? root.accent : "transparent"
+                                    }
+                                    Text {
+                                        x: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 24
+                                        elide: Text.ElideRight
+                                        text: smi.modelData.label
+                                        color: sma.containsMouse ? "white" : spPal.fg
+                                        font.family: spPal.fam; font.pixelSize: 13
+                                    }
+                                    MouseArea {
+                                        id: sma
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            // the entry must be read BEFORE closing: the run() bodies
+                                            // take it as an argument, so order never matters
+                                            var e = ui.spMenuEntry;
+                                            ui.spMenuEntry = null;
+                                            if (e && smi.modelData.run) smi.modelData.run(e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // any press elsewhere closes the menu: this sits over the whole panel
+                        // but BELOW the menu row Column (z: -1), so it is still topmost for
+                        // the rows underneath while the menu is open — without stealing the
+                        // menu's own clicks
+                        MouseArea {
+                            anchors.fill: spot
+                            z: -1
+                            enabled: spMenu.open
+                            onClicked: ui.spMenuEntry = null
                         }
                     }
 
@@ -8717,7 +8872,10 @@ Scope {
 
                                 Repeater {
                                     id: appsRep
-                                    model: ui.spQuery.trim() === "" ? root.appSections : root.appSearchSection(ui.spQuery)
+                                    model: {
+                                        var rev = root.spHiddenRev;   // binding-level read: hiding/showing an app rebuilds the grid instantly
+                                        return ui.spQuery.trim() === "" ? root.appSections : root.appSearchSection(ui.spQuery);
+                                    }
                                     delegate: Column {
                                         id: sec
                                         required property var modelData
@@ -8790,7 +8948,11 @@ Scope {
                                                         id: cma
                                                         anchors.fill: parent
                                                         hoverEnabled: true
-                                                        onClicked: { ui.pop = ""; root.launchApp(cell.e); }
+                                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                                        onClicked: mouse => {
+                                                            if (mouse.button === Qt.RightButton) ui.spOpenAppMenu(cell.e, cell, mouse.x, mouse.y);
+                                                            else { ui.pop = ""; root.launchApp(cell.e); }
+                                                        }
                                                     }
                                                 }
                                             }
