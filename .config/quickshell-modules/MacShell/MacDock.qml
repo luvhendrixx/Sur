@@ -3398,17 +3398,25 @@ Scope {
     }
     Timer { id: youngWin; interval: 250; onTriggered: root.rebuild() }
 
+    // Qt's SVG engine only speaks SVG Tiny 1.2 — it cannot draw the mask/
+    // filter/clipPath-heavy Adwaita trash SVGs (they come out as a black and
+    // dark-pink quadrant box). The real thing is therefore pre-rendered to
+    // PNGs, shipped in assets/, and served whenever the trash icon is wanted.
+    function assetUrl(name) {
+        return Qt.resolvedUrl("assets/" + name);
+    }
+
     function iconSrc(icon) {
+        if (icon === "user-trash") return assetUrl("user-trash.png");
+        if (icon === "user-trash-full") return assetUrl("user-trash-full.png");
         if (!icon) return Quickshell.iconPath("application-x-executable");
         if (icon.charAt(0) === "/") return "file://" + icon;
         return Quickshell.iconPath(icon, "application-x-executable");
     }
     // icon of a dock cell; the Trash switches to the "full" icon while there is something in it
     function cellIconSrc(it) {
-        if (it && it.special === "trash" && trashFull) {
-            var p = Quickshell.iconPath("user-trash-full", true);
-            if (p !== "") return p;
-        }
+        if (it && it.special === "trash" && trashFull)
+            return assetUrl("user-trash-full.png");
         return iconSrc(it ? it.icon : "");
     }
 
