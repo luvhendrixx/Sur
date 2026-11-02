@@ -154,7 +154,7 @@ Scope {
     readonly property var settingKeys: ["barEnabled", "darkMode", "accent", "fontFamily", "barHeight", "glassOpacity",
         "barStyle", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "barBgOpacity", "glassRealtime", "glassDebug", "wallpaperPath", "use24h", "showDate",
         "showSeconds", "showBatteryPercent", "showTray", "showSearch", "webSearchEngine", "barLogoMode", "barCustomLogoPath", "barWidgets", "weekStartsMonday", "terminal", "launcher",
-        "filesCmd", "clipboardCmd", "appUsage", "spHiddenApps", "clipHistory", "clipAutoPaste", "emojiRecent", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
+        "filesCmd", "clipboardCmd", "appUsage", "spHiddenApps", "clipHistory", "clipAutoPaste", "emojiRecent", "powerMode", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
     // Optional bar widgets; tray and Spotlight use their existing showTray/showSearch settings.
     property var barWidgets: ["appleMenu", "appMenus", "volume", "keyboard", "reminders", "notifications", "bluetooth", "privacy", "controlCenter", "clock"]
     function barWidgetEnabled(id) { return barWidgets.indexOf(id) >= 0; }
@@ -377,6 +377,15 @@ Scope {
                 ctx.globalAlpha = 1;
                 circ(9, 14.6, 1.3); ctx.fill();
                 if (flag) line(2.5, 2.5, 15.5, 15.5);
+            } else if (k === "ethernet") {
+                // RJ45: cable neck on top, plug body, pins rising into the body from below
+                ctx.beginPath(); ctx.rect(7.4, 3.6, 3.2, 3.1); ctx.fill();          // cable neck
+                ctx.beginPath(); ctx.moveTo(4.2, 6.7); ctx.rect(4.2, 6.7, 9.6, 9.3); ctx.stroke();   // plug shell
+                var pinYTop = 13.4;
+                for (i2 = 0; i2 < 7; i2++) {
+                    var px = 5.4 + i2 * 1.46;
+                    line(px, pinYTop, px, 16);
+                }
             } else if (k === "bluetooth") {
                 poly([5, 5.5, 13, 12.5, 9, 16, 9, 2, 13, 5.5, 5, 12.5], false);
                 if (flag) line(2.5, 2.5, 15.5, 15.5);
@@ -1420,6 +1429,22 @@ Scope {
     readonly property bool charging: hasBattery && (bat.state === UPowerDeviceState.Charging
                                                      || bat.state === UPowerDeviceState.FullyCharged)
 
+    // batteries report seconds; "1:23" is the shape macOS shows for battery estimates
+    function fmtBatteryTime(s) {
+        if (s === undefined || s === null || s <= 0 || s >= 31536000) return "";
+        var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+        if (m >= 60) { h += 1; m = 0; }
+        if (h === 0 && m === 0) return "";
+        return h > 0 ? (h + ":" + String(m).padStart(2, "0") + " h") : (m + " min");
+    }
+    readonly property string batLine: {
+        if (!hasBattery) return "";
+        if (bat.state === UPowerDeviceState.FullyCharged) return "Fully Charged";
+        if (charging) { var f = fmtBatteryTime(bat.timeToFull); return f !== "" ? "Charging · " + f + " until full" : "Charging"; }
+        if (bat.state === UPowerDeviceState.Discharging) { var r = fmtBatteryTime(bat.timeToEmpty); return r !== "" ? r + " remaining" : "On Battery"; }
+        return "Power Adapter";
+    }
+
     // media
     readonly property var player: {
         var ps = Mpris.players.values, best = null;
@@ -1569,6 +1594,8 @@ Scope {
             }
         }
     }
+    // ethernet is "on line" whenever an ethernet profile has a live device (cable plugged in)
+    readonly property bool ethUp: otherConnections.some(function (r) { return r.type === "802-3-ethernet" && r.active; })
     function toggleConnection(c) {
         if (!c) return;
         var args = c.active ? ["nmcli", "connection", "down", "id", c.name] : ["nmcli", "connection", "up", "id", c.name];
@@ -1668,6 +1695,70 @@ Scope {
         onExited: root.btBusy = ""
     }
     Timer { id: btAfter; interval: 1200; onTriggered: { root.scanBt(); root.refreshBt(); } }
+
+    // ── power modes (auto-cpufreq): picked from the battery popover, applied via pkexec ──
+    property string powerMode: "balanced"     // balanced = hand control back to the auto-cpufreq daemon (--force reset)
+    property bool cpufreqBusy: false          // a mode change is running (pkexec can take a moment)
+    property bool cfPopOpen: false
+    readonly property var cpufreqModes: [
+        { id: "performance", label: "Performance" },
+        { id: "balanced", label: "Balanced" },
+        { id: "powersave", label: "Power Save" }
+    ]
+    function setCpufreqMode(m) {
+        if (root.cpufreqBusy || m === root.powerMode) return;
+        root.cpufreqBusy = true;
+        cfModeProc.targetMode = m;
+        // balanced intentionally runs --force reset: the daemon then decides by power state,
+        // exactly like auto-cpufreq's own "normal mode"
+        cfModeProc.command = ["pkexec", "auto-cpufreq", "--force", m === "balanced" ? "reset" : m];
+        cfModeProc.running = true;
+    }
+    Process {
+        id: cfModeProc
+        command: []
+        property string targetMode: ""
+        stdout: StdioCollector { }
+        onExited: {
+            root.cpufreqBusy = false;
+            root.cpufreqProbe();                 // turbo may have been reset by the daemon
+            if (exitCode === 0) root.powerMode = cfModeProc.targetMode;   // only adopt on success (pkexec declined = non-zero)
+            else root.cpufreqTimerKick.restart();
+        }
+    }
+    function setCpufreqTurbo(t) {
+        cfTurboProc.command = ["pkexec", "auto-cpufreq", "--turbo", t ? "always" : "auto"];
+        cfTurboProc.running = true;
+    }
+    Process {
+        id: cfTurboProc
+        command: []
+        stdout: StdioCollector { }
+        onExited: root.cpufreqProbe()
+    }
+    // live state: current governor + whether turbo boost is allowed right now
+    property string cpuGov: ""
+    property bool turbo: true
+    function cpufreqProbe() { if (!cfProbe.running) cfProbe.running = true; }
+    Process {
+        id: cfProbe
+        command: ["sh", "-c",
+            "g=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null); "
+            + "b=$(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null); "
+            + "t=$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null); "
+            + "[ -z \"$b\" ] && [ -n \"$t\" ] && b=$((1 - (t + 0))); "
+            + "echo ${g:-?} ${b:-?}"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var p = text.trim().split(/\s+/);
+                root.cpuGov = p[0] === "?" ? "" : p[0];
+                if (p[1] !== undefined && p[1] !== "?") root.turbo = (p[1] === "1");
+            }
+        }
+    }
+    Timer { id: cfProbeTimer; interval: 5000; repeat: true; running: root.cfPopOpen; onTriggered: root.cpufreqProbe() }
+    Timer { id: cpufreqTimerKick; interval: 1500; onTriggered: root.cpufreqProbe() }
     readonly property bool airplane: !wifiOn && !btOn
     function toggleAirplane() {
         sh(airplane ? "rfkill unblock all" : "rfkill block all");
@@ -1675,7 +1766,7 @@ Scope {
         settleTimer.restart();
     }
     Timer { id: settleTimer; interval: 900; onTriggered: { root.refreshWifi(); root.refreshBt(); } }
-    Timer { interval: 6000; repeat: true; running: true; triggeredOnStart: true; onTriggered: { root.refreshWifi(); root.refreshBt(); } }
+    Timer { interval: 6000; repeat: true; running: true; triggeredOnStart: true; onTriggered: { root.refreshWifi(); root.refreshBt(); root.refreshConnections(); } }
 
     // brightness
     property real brightness: 0.5
@@ -2904,6 +2995,7 @@ Scope {
         barEnabled = true;
         darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = true;
         barStyle = "liquid"; use24h = false; showDate = true; showSeconds = false; showBatteryPercent = true;
+        powerMode = "balanced";
         showTray = true; showSearch = true;
         barLogoMode = "apple"; barCustomLogoPath = "";
         terminal = "";                          // back to auto-detect
@@ -3911,7 +4003,7 @@ Scope {
                 }
                 // bounding box of all glass that is on screen right now (popovers, notification popups) + a refraction margin
                 readonly property rect glassRect: {
-                    var items = [menuPop, cc, cal, wifiPop, btPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
+                    var items = [menuPop, cc, cal, wifiPop, btPop, batPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
                     for (var i = 0; i < items.length; i++) {
                         var it = items[i];
                         if (!it.visible) continue;
@@ -3921,7 +4013,7 @@ Scope {
                     return any ? Qt.rect(x0 - 64, y0 - 64, x1 - x0 + 128, y1 - y0 + 128) : Qt.rect(0, 0, 0, 0);
                 }
                 readonly property bool isMenu: ["apple", "app", "file", "edit", "view", "window", "help"].indexOf(pop) >= 0
-                readonly property bool anyVisible: menuPop.visible || cc.visible || cal.visible || wifiPop.visible || trayPop.visible || notifPop.visible || toastArea.visible || remPop.visible || remToastArea.visible || volPop.visible || kbPop.visible
+                readonly property bool anyVisible: menuPop.visible || cc.visible || cal.visible || wifiPop.visible || btPop.visible || batPop.visible || trayPop.visible || notifPop.visible || toastArea.visible || remPop.visible || remToastArea.visible || volPop.visible || kbPop.visible
                 onAnyVisibleChanged: root.popCount += (anyVisible ? 1 : -1)
                 onPopChanged: {
                     armed = "";
@@ -3933,6 +4025,8 @@ Scope {
                     root.remOpen = (pop === "rem");
                     if (pop === "rem") root.remResetDraft();
                     if (pop === "wifi") { root.wifiError = ""; root.scanWifi(); root.refreshConnections(); }
+                    root.cfPopOpen = (pop === "bat");
+                    if (pop === "bat") root.cpufreqProbe();
                     if (pop === "spot") {
                         spMode = "home"; spQuery = ""; spSel = 0; spExpanded = ({}); clipMenu = false;
                         spMenuEntry = null;
@@ -4411,6 +4505,7 @@ Scope {
                         }
                         // battery
                         Item {
+                            id: batBtn
                             visible: root.hasBattery
                             width: root.hasBattery ? batRow.width + 14 : 0; height: 28
                             Row {
@@ -4451,7 +4546,7 @@ Scope {
                                     }
                                 }
                             }
-                            MouseArea { anchors.fill: parent; onClicked: ui.openPop("cc", 0) }
+                            MouseArea { anchors.fill: parent; onClicked: { root.cpufreqProbe(); ui.openPop("bat", batBtn.mapToItem(ui, 0, 0).x + batBtn.width / 2); } }
                         }
                         // reminders (click, or ALT + R from anywhere)
                         Item {
@@ -4501,7 +4596,8 @@ Scope {
                                 width: parent.width - 2; height: parent.height - 6; radius: 6
                                 color: ui.pop === "wifi" ? pal.hover : "transparent"
                             }
-                            Glyph { anchors.centerIn: parent; width: 16; height: 16; kind: "wifi"; level: root.wifiOn ? (root.wifiLevel || 1) : 3; flag: !root.wifiOn; color: root.wifiOn ? pal.fg : pal.fg2 }
+                            Glyph { visible: !root.ethUp; anchors.centerIn: parent; width: 16; height: 16; kind: "wifi"; level: root.wifiOn ? (root.wifiLevel || 1) : 3; flag: !root.wifiOn; color: root.wifiOn ? pal.fg : pal.fg2 }
+                            Glyph { visible: root.ethUp; anchors.centerIn: parent; width: 16; height: 16; kind: "ethernet"; color: pal.fg }
                             MouseArea { anchors.fill: parent; onClicked: ui.openPop("wifi", wifiBtn.mapToItem(ui, 0, 0).x) }
                         }
                         // search
@@ -6330,6 +6426,167 @@ Scope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 onClicked: { ui.pop = ""; Quickshell.execDetached(["blueman-manager"]); }
+                            }
+                        }
+                    }
+                }
+
+                // ═════════ power: battery + auto-cpufreq modes (Performance / Balanced / Power Save) ═════════
+                Item {
+                    id: batPop
+                    z: 10
+                    width: 312
+                    height: batCol.height + 24
+                    x: Math.max(6, Math.min(ui.width - width * root.barPopupScale - 8, ui.menuX + 14 - width / 2))
+                    y: root.barHeight + 6
+                    opacity: ui.pop === "bat" ? 1 : 0
+                    visible: opacity > 0
+                    scale: root.barPopupScale * (ui.pop === "bat" ? 1 : 0.96)
+                    transformOrigin: Item.Top
+                    Behavior on opacity { NumberAnimation { duration: 110 } }
+                    Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+                    LGlass {
+                        anchors.fill: parent
+                        backdrop: glassBackdrop.item
+                        shaderUrl: root.glassShaderUrl
+                        liquid: root.liquidActive
+                        dark: root.darkMode
+                        bx: batPop.x; by: batPop.y
+                        cornerR: 22
+                        tint: root.glassOpacity
+                        thickness: 24
+                        strength: 0.7 * root.glassLiquid
+                        rim: root.glassRim
+                        grain: root.glassGrain
+                        blur: root.glassBlur
+                        debug: root.glassDebug
+                        onShaderError: root.glassState = "failed"
+                    }
+                    MouseArea { anchors.fill: parent }          // swallow clicks on empty glass so the popover doesn't close
+
+                    Column {
+                        id: batCol
+                        x: 12; y: 12
+                        width: parent.width - 24
+                        spacing: 6
+
+                        // header: title + live percent
+                        Item {
+                            width: parent.width; height: 32
+                            Text {
+                                x: 6; anchors.verticalCenter: parent.verticalCenter
+                                text: "Battery"
+                                color: pal.fg
+                                font.family: pal.fam; font.pixelSize: 15; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                anchors.right: parent.right; anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.batPct + "%"
+                                color: root.batPct <= 15 && !root.charging ? "#FF453A" : pal.fg
+                                font.family: pal.fam; font.pixelSize: 15; font.weight: Font.DemiBold
+                            }
+                        }
+                        Rectangle { width: parent.width; height: 1; color: pal.sep }
+
+                        Text {
+                            leftPadding: 6
+                            width: parent.width
+                            text: root.batLine
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 12
+                        }
+
+                        // ── power mode: Performance / Balanced / Power Save ──
+                        // backed by auto-cpufreq: performance & power save are forced governs,
+                        // balanced runs `--force reset` so the daemon decides by power state.
+                        Text {
+                            leftPadding: 6; topPadding: 4
+                            text: "Power Mode"
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 11; font.weight: Font.DemiBold
+                        }
+                        Rectangle {
+                            width: parent.width; height: 34
+                            radius: 9
+                            color: root.darkMode ? "#2C2C2E" : "#EEEEF0"
+                            border.width: 1
+                            border.color: pal.sep
+                            Row {
+                                id: segRow
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                spacing: 2
+                                Repeater {
+                                    model: root.cpufreqModes
+                                    delegate: Item {
+                                        id: seg
+                                        required property var modelData
+                                        width: (parent.width - 4) / 3
+                                        height: parent.height
+                                        readonly property bool active: root.powerMode === modelData.id
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: 7
+                                            color: seg.active ? root.accent : (segMa.containsMouse ? seg.active ? root.accent : pal.hover : "transparent")
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: root.cpufreqBusy && seg.active ? "…" : seg.modelData.label
+                                            color: seg.active ? "#fff" : (segMa.containsMouse ? pal.fg : pal.fg2)
+                                            font.family: pal.fam; font.pixelSize: 12; font.weight: seg.active ? Font.DemiBold : Font.Normal
+                                        }
+                                        MouseArea {
+                                            id: segMa
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            enabled: !root.cpufreqBusy
+                                            onClicked: root.setCpufreqMode(seg.modelData.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: root.cpuGov !== ""
+                            leftPadding: 6
+                            width: parent.width
+                            // auto-cpufreq's own words for what is currently on the CPU
+                            text: root.powerMode === "balanced"
+                                  ? "Balanced (auto · daemon decides)"
+                                  : root.powerMode.charAt(0).toUpperCase() + root.powerMode.slice(1) + " (forced · " + root.cpuGov + ")"
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 11
+                        }
+
+                        // ── turbo boost ──
+                        Rectangle { width: parent.width; height: 1; color: pal.sep }
+                        Row {
+                            width: parent.width; spacing: 6
+                            Column {
+                                width: parent.width - 52 - 20
+                                spacing: 1
+                                Text {
+                                    x: 6
+                                    text: "Turbo Boost"
+                                    color: pal.fg
+                                    font.family: pal.fam; font.pixelSize: 12
+                                }
+                                Text {
+                                    x: 6; width: parent.width - 12
+                                    wrapMode: Text.WordWrap
+                                    text: "on = always boost clocks · off = auto (daemon decides)"
+                                    color: pal.fg2
+                                    font.family: pal.fam; font.pixelSize: 10
+                                }
+                            }
+                            PSwitch {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: parent.width - width - 6
+                                t: pal
+                                checked: root.turbo
+                                onToggled: v => { root.setCpufreqTurbo(v); root.turbo = v; }
                             }
                         }
                     }
