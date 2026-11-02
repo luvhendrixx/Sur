@@ -2411,9 +2411,29 @@ Scope {
         var p = Quickshell.iconPath(name, true);
         return p !== "" ? p : fb;
     }
+    // Spotlight knows apps through their .desktop files, but this shell's own Settings
+    // window has none of its own (org.quickshell.desktop is NoDisplay). Give it a
+    // synthetic entry so it can be searched and opened from Spotlight (the menu bar
+    // and the keyboard shortcut keep working exactly as before).
+    readonly property string settingsIconPath: {
+        var u = Qt.resolvedUrl("assets/settings.png").toString();
+        return u.indexOf("file://") === 0 ? u.substring(7) : u;
+    }
+    readonly property var shellSettingsEntry: ({
+        id: "org.quickshell",
+        name: "System Settings",
+        genericName: "Settings",
+        comment: "Appearance, Dock, Menu Bar, widgets and the rest of the shell's options",
+        keywords: ["settings", "preferences", "macshell", "dock", "menu bar", "appearance", "wallpaper"],
+        categories: ["Settings"],
+        icon: settingsIconPath,
+        noDock: true,                           // not pinnable: the dock has no .desktop entry to pin
+        execute: function () { root.openSettings("general"); }
+    })
     readonly property var appList: {
         var vals = DesktopEntries.applications.values, out = [];
         for (var i = 0; i < vals.length; i++) if (!vals[i].noDisplay) out.push(vals[i]);
+        out.push(root.shellSettingsEntry);
         out.sort(function (a, b) { return a.name.localeCompare(b.name); });
         return out;
     }
@@ -2503,6 +2523,7 @@ Scope {
         root.saveTimer.restart();
     }
     function spotIsPinned(e) {
+        if (!e || e.noDock) return false;
         var d = root.hub && root.hub.dock ? root.hub.dock : null;
         if (!d) return false;
         var id = String(e.id).replace(/\.desktop$/, "").toLowerCase(), p = (d.pinned || []), i;
@@ -2511,6 +2532,7 @@ Scope {
         return false;
     }
     function spotPin(e) {
+        if (!e || e.noDock) return;           // synthetic entries have no desktop file to pin
         var d = root.hub && root.hub.dock ? root.hub.dock : null;
         if (!d) return;                       // no dock instantiated: nothing to pin into
         d.togglePin({ key: String(e.id).replace(/\.desktop$/, "").toLowerCase(), entry: e });
@@ -2542,7 +2564,7 @@ Scope {
         var all = [
             { title: "Lock Screen", glyph: "lock", run: function () { sh("~/.config/quickshell/MacLock/lock-via-ipc.sh"); } },
             { title: "Sleep", glyph: "moon", run: function () { sh("systemctl suspend"); } },
-            { title: "System Settings\u2026", glyph: "gear", run: function () { sh("hyprmod"); } },
+            { title: "Hyprland Settings\u2026", glyph: "gear", run: function () { sh("hyprmod"); } },
             { title: "Log Out", glyph: "logout", confirm: true, run: function () { root.logOut(); } },
             { title: "Restart", glyph: "restart", confirm: true, run: function () { sh("systemctl reboot"); } },
             { title: "Shut Down", glyph: "power", confirm: true, run: function () { sh("systemctl poweroff"); } }
@@ -8553,12 +8575,15 @@ Scope {
                             x: 6; y: 6
                             width: parent.width - 12
                             Repeater {
-                                model: spMenu.open ? [
-                                    { label: ui.spMenuEntry && root.spotIsHidden(ui.spMenuEntry) ? "Show App" : "Hide App",
-                                      run: function (e) { if (e) root.spotToggleHidden(e); } },
-                                    { label: ui.spMenuEntry && root.spotIsPinned(ui.spMenuEntry) ? "Remove from Dock" : "Pin to Dock",
-                                      run: function (e) { if (e) root.spotPin(e); } }
-                                ] : []
+                                model: {
+                                    if (!spMenu.open) return [];
+                                    var m = [{ label: ui.spMenuEntry && root.spotIsHidden(ui.spMenuEntry) ? "Show App" : "Hide App",
+                                               run: function (e) { if (e) root.spotToggleHidden(e); } }];
+                                    if (!(ui.spMenuEntry && ui.spMenuEntry.noDock))
+                                        m.push({ label: ui.spMenuEntry && root.spotIsPinned(ui.spMenuEntry) ? "Remove from Dock" : "Pin to Dock",
+                                                 run: function (e) { if (e) root.spotPin(e); } });
+                                    return m;
+                                }
                                 delegate: Item {
                                     id: smi
                                     required property var modelData
