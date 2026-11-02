@@ -3434,17 +3434,32 @@ Scope {
     }
 
     function iconSrc(icon) {
-        if (icon === "user-trash") return assetUrl("user-trash.png");
-        if (icon === "user-trash-full") return assetUrl("user-trash-full.png");
+        if (iconOverrides[icon]) return assetUrl(iconOverrides[icon]);
         if (!icon) return Quickshell.iconPath("application-x-executable");
         if (icon.charAt(0) === "/") return "file://" + icon;
         return Quickshell.iconPath(icon, "application-x-executable");
+    }
+    // icon overrides for apps the theme can't resolve but we have lovely hand-made art for
+    readonly property var iconOverrides: ({
+        "org.quickshell": "settings.png",       // this shell's own Settings window (macOS gear)
+        "user-trash": "user-trash.png",         // Adwaita's SVG trash can't be drawn by Qt's SVG engine
+        "user-trash-full": "user-trash-full.png"
+    })
+    // strict lookup: "" when the theme has no such icon, so the dock can draw its own
+    // placeholder tile instead of every nameless app showing the same generic box.
+    // (`true` as the fallback argument means "no fallback": Quickshell returns "" for
+    //  names the theme doesn't have, unlike a string fallback which always returns a URL.)
+    function iconResolve(icon) {
+        if (!icon) return "";
+        if (iconOverrides[icon]) return assetUrl(iconOverrides[icon]);
+        if (icon.charAt(0) === "/") return "file://" + icon;
+        return Quickshell.iconPath(icon, true);
     }
     // icon of a dock cell; the Trash switches to the "full" icon while there is something in it
     function cellIconSrc(it) {
         if (it && it.special === "trash" && trashFull)
             return assetUrl("user-trash-full.png");
-        return iconSrc(it ? it.icon : "");
+        return iconResolve(it ? it.icon : "");
     }
 
     // ── Trash state: the standard XDG trash (~/.local/share/Trash/files) is what Dolphin's trash:/ shows ──
@@ -4306,6 +4321,43 @@ Scope {
                                     brightness: ma.pressed ? -0.3 : 0.0
                                 }
 
+                                // ── drawn placeholder for apps whose icon is not in the theme ──
+                                // (instead of the generic "executable box" every nameless app used
+                                //  to show: a warm macOS-ish tile with the app's initial, so helpers
+                                //  like the polkit password prompt still look at home in the Dock)
+                                Rectangle {
+                                    // soft drop shadow, drawn under the tile (a MultiEffect can't be used
+                                    // here: capturing the tile into a texture drops its child Text)
+                                    visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
+                                    width: iconFallback.width + 4; height: width
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: img.lift - 4
+                                    radius: width * 0.22
+                                    color: Qt.rgba(0, 0, 0, 0.22)
+                                }
+                                Rectangle {
+                                    id: iconFallback
+                                    // (source is a url object, so compare its string form with "" — a plain === "" never matches)
+                                    visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
+                                    width: img.width; height: width
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: img.lift
+                                    radius: width * 0.22
+                                    gradient: Gradient {
+                                        GradientStop { position: 0; color: root.darkMode ? "#8E8E93" : "#AEAEB2" }
+                                        GradientStop { position: 1; color: root.darkMode ? "#48484A" : "#7C7C80" }
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: cell.modelData && cell.modelData.name ? String(cell.modelData.name).trim().charAt(0).toUpperCase() : "?"
+                                        color: "#FFFFFF"
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Math.round(iconFallback.width * 0.46)
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
                                 // ── window thumbnail (same box as the icon, so magnification just works) ──
                                 Item {
                                     id: th

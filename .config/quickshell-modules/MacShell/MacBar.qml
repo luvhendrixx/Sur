@@ -1723,7 +1723,7 @@ Scope {
             root.cpufreqBusy = false;
             root.cpufreqProbe();                 // turbo may have been reset by the daemon
             if (exitCode === 0) root.powerMode = cfModeProc.targetMode;   // only adopt on success (pkexec declined = non-zero)
-            else root.cpufreqTimerKick.restart();
+            else cpufreqTimerKick.restart();
         }
     }
     function setCpufreqTurbo(t) {
