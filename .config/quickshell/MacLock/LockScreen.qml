@@ -1489,7 +1489,7 @@ Item {
         // avatar
         Item {
             anchors.horizontalCenter: parent.horizontalCenter
-            width: 70 * ls.u; height: width
+            width: 78 * ls.u; height: width
             scale: ls.st.engaged ? 1.0 : 0.94
             Behavior on scale { NumberAnimation { duration: 650; easing.type: Easing.OutQuint } }
             Rectangle {
@@ -1499,7 +1499,7 @@ Item {
                     anchors.centerIn: parent
                     visible: avatarImg.status !== Image.Ready
                     text: (ls.st.userName || "?").charAt(0).toUpperCase()
-                    color: "white"; font.family: ls.fam; font.pixelSize: 30 * ls.u; font.weight: Font.DemiBold
+                    color: "white"; font.family: ls.fam; font.pixelSize: 33 * ls.u; font.weight: Font.DemiBold
                 }
             }
             Item {
