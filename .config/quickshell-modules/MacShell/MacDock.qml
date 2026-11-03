@@ -1016,8 +1016,8 @@ Scope {
                 readonly property int vsize: 204        // crop circle diameter on screen
                 readonly property int outSize: 512      // saved avatar resolution
                 // the "current avatar" preview mirrors the lock screen 1:1 — same size math as
-                // LockScreen.qml's 78 * u, so what you see here is what the lock screen shows
-                readonly property int avatarPx: Math.round(78 * Math.max(0.6,
+                // LockScreen.qml's 84 * u, so what you see here is what the lock screen shows
+                readonly property int avatarPx: Math.round(84 * Math.max(0.6,
                     (prefsWindow.screen ? prefsWindow.screen.height : 1200) / 1200))
                 // scale used only on the off-screen save stage (native-res 512² copy)
                 readonly property real saveScale: pane.imgW > 0
