@@ -325,6 +325,11 @@ Scope {
     }
     Timer { id: saveTimer; interval: 400; onTriggered: root.saveSettings() }
 
+    // called by the Settings pane teardown: writes any debounced change immediately
+    // instead of waiting for the 400 ms saveTimer (which may never fire if the shell
+    // is closing something at the same time).
+    function flushSave() { saveTimer.stop(); if (ready) saveSettings(); }
+
     // ───────────── music player (MPRIS) ─────────────
     // the player that is playing, otherwise the first one (same rule as the Menu Bar's media widget)
     readonly property var player: {

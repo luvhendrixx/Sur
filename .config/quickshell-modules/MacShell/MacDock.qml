@@ -589,7 +589,7 @@ Scope {
             cur = p;
         }
         onCurChanged: flick.contentY = 0
-        onVisibleChanged: { if (!visible && root.hub && root.hub.widgets) root.hub.widgets.editing = false; }   // closing Settings ends widget editing
+        onVisibleChanged: if (!visible) root.teardownEditing()   // closing Settings (any way) saves + ends widget editing
 
         Shortcut { sequences: ["Escape", "Ctrl+W"]; onActivated: prefsWindow.visible = false }
 
@@ -914,6 +914,23 @@ Scope {
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
 
+                // Qt's built-in wheel handling advances the pane by only ~60 px per wheel
+                // notch, which makes the long panes (Appearance, Dock, Widgets) feel glacial.
+                // Our own handler scrolls 2× on a mouse wheel (1080-style) and stays 1:1-ish
+                // on touchpads, which report a fine-grained pixelDelta instead. Wheel events
+                // inside the panes (the avatar crop zoom) are consumed by that MouseArea
+                // first, so they never reach here.
+                WheelHandler {
+                    onWheel: (event) => {
+                        var max = Math.max(0, flick.contentHeight - flick.height);
+                        var d = event.pixelDelta.y !== 0
+                            ? event.pixelDelta.y * 1.6          // touchpad / trackpad smooth scroll
+                            : event.angleDelta.y * 2.0;          // mouse wheel notch = 120
+                        flick.contentY = Math.max(0, Math.min(max, flick.contentY - d));
+                        event.accepted = true;
+                    }
+                }
+
                 Loader {
                     id: paneLoader
                     x: 22
@@ -993,6 +1010,10 @@ Scope {
 
                 readonly property int vsize: 204        // crop circle diameter on screen
                 readonly property int outSize: 512      // saved avatar resolution
+                // the "current avatar" preview mirrors the lock screen 1:1 — same size math as
+                // LockScreen.qml's 78 * u, so what you see here is what the lock screen shows
+                readonly property int avatarPx: Math.round(78 * Math.max(0.6,
+                    (prefsWindow.screen ? prefsWindow.screen.height : 1200) / 1200))
                 // scale used only on the off-screen save stage (native-res 512² copy)
                 readonly property real saveScale: pane.imgW > 0
                     ? Math.max(pane.outSize / pane.imgW, pane.outSize / pane.imgH) : 1
@@ -1272,7 +1293,7 @@ Scope {
                         // current avatar preview
                         Item {
                             x: 14
-                            width: 60; height: 60
+                            width: pane.avatarPx; height: pane.avatarPx
                             anchors.verticalCenter: parent.verticalCenter
                             // clicking the avatar (empty or not) opens the OS file chooser
                             MouseArea {
@@ -1290,7 +1311,7 @@ Scope {
                                     visible: curImg.status !== Image.Ready
                                     text: pane.userName.charAt(0).toUpperCase()
                                     color: pal.text2
-                                    font.family: pal.fam; font.pixelSize: 24; font.weight: Font.Medium
+                                    font.family: pal.fam; font.pixelSize: Math.round(pane.avatarPx * 0.43); font.weight: Font.Medium
                                 }
                                 Image {
                                     id: curImg
@@ -1319,7 +1340,7 @@ Scope {
                             }
                         }
                         Column {
-                            x: 86
+                            x: pane.avatarPx + 26
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 7
                             Row {
@@ -2347,7 +2368,18 @@ Scope {
                         SButton {
                             t: pal
                             text: wp.editing ? "Stop Editing" : "Edit Desktop Widgets"
-                            onClicked: if (wp.wd) wp.wd.editing = !wp.wd.editing
+                            onClicked: {
+                                if (!wp.wd) return;
+                                var on = !wp.wd.editing;
+                                wp.wd.editing = on;
+                                if (on) {
+                                    // The widgets layer sits under every workspace, but the Settings
+                                    // pane covers the desktop here. Jump to the next workspace so the
+                                    // widgets are visible and clickable right away; "Stop Editing"
+                                    // (or closing the pane) ends edit mode wherever you are.
+                                    Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "+1" })']);
+                                }
+                            }
                         }
                     }
                 }
@@ -3332,6 +3364,18 @@ Scope {
         }
         prefsWindow.visible = true;
         prefsWindow.requestActivate();
+    }
+
+    // Whenever the Settings pane goes away (Ctrl+W / traffic light / SUPER+W / any close),
+    // widget editing must end cleanly: flush any debounced save first so a drag that
+    // finished < 400 ms ago can never be lost, then leave edit mode. Doing it here also
+    // covers the case where the shell tears the window down abruptly.
+    function teardownEditing() {
+        var w = root.hub && root.hub.widgets ? root.hub.widgets : null;
+        if (!w) return;
+        if (w.editing) w.flushSave();   // save now, while the process is guaranteed alive
+        w.editing = false;
+        w.flushSave();                  // and once more after leaving edit mode
     }
 
     function resetPins() {
