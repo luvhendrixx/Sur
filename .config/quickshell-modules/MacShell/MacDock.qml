@@ -915,12 +915,17 @@ Scope {
                 flickableDirection: Flickable.VerticalFlick
 
                 // Qt's built-in wheel handling advances the pane by only ~60 px per wheel
-                // notch, which makes the long panes (Appearance, Dock, Widgets) feel glacial.
+                // notch (and since Qt 6.6 this native path is sluggish even for touchpads).
                 // Our own handler scrolls 2× on a mouse wheel (1080-style) and stays 1:1-ish
                 // on touchpads, which report a fine-grained pixelDelta instead. Wheel events
                 // inside the panes (the avatar crop zoom) are consumed by that MouseArea
                 // first, so they never reach here.
+                // acceptedDevices MUST include TouchPad: WheelHandler defaults to
+                // PointerDevice.Mouse only, so touchpad wheel events are rejected by the
+                // handler and fall through to Flickable's sluggish native scrolling —
+                // which is exactly what made scrolling feel slow here.
                 WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     onWheel: (event) => {
                         var max = Math.max(0, flick.contentHeight - flick.height);
                         var d = event.pixelDelta.y !== 0
