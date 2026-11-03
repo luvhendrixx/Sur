@@ -2553,6 +2553,9 @@ Scope {
         root.spHiddenRev++;
         root.saveTimer.restart();
     }
+    // Settings → Spotlight → Hidden Apps card resolves each hidden id to its desktop
+    // entry for the name + icon (was calling a missing function → TypeError storm).
+    function spEntryById(id) { return root.lookup(String(id)); }
     function appItems(q, limit) {
         var r = searchApps(q), out = [];
         for (var i = 0; i < r.length && i < limit; i++)
