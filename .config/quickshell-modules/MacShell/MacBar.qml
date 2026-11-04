@@ -4226,10 +4226,14 @@ Scope {
                                     }
                                     // single captures: hidden backdrops stay warm once a second (their window goes live the moment it opens);
                                     // while recording only a backdrop that is actually on screen refreshes, slowly
+                                    // keep-warm timer: DISABLED. It fired captureFrame() on non-live captures, but
+                                    // a ScreencopyView with no recording context rejects every call ("Cannot
+                                    // capture frame"), so in smart mode this was 4 failed GPU attempts/sec +
+                                    // log spam with zero benefit - and under always-live the captures are live,
+                                    // so the timer never ran anyway. Popover fade-in covers the first frames.
                                     Timer {
                                         interval: sv.hush ? 1500 : (bd.hostShown ? 250 : 1000); repeat: true
-                                        running: !root.captureHeld && !sv.live && sv.captureSource !== null
-                                                 && (!sv.hush || (bd.hostShown && (ui.anyVisible || spotWin.visible || swWin.visible || wpWin.visible)))
+                                        running: false
                                         onTriggered: { if (typeof sv.captureFrame === "function") sv.captureFrame(); }
                                     }
                                 }
