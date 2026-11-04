@@ -130,7 +130,7 @@ Also make sure **blur is enabled** in your Hyprland `decoration` settings, or th
 | `wallpapers` | `toggle`, `open`, `close` |
 | `switcher` | `next`, `prev`, `commit`, `cancel` |
 | `settings` | `open` (works even if both the bar and the Dock are disabled) |
-| `glass` | `captures true\|false` (window previews on/off, same as Settings → Dock Behavior → *Live window capture*) |
+| `glass` | `captures true\|false` (window previews on/off, same as Settings → Dock → *Live window capture*) |
 
 ## Wallpaper
 
@@ -162,7 +162,7 @@ in `~/.config/macbar/settings.json` if you don't want that.
 | Blank app icons | No Qt icon theme: set one (`qt6ct`, or `QS_ICON_THEME`) and install it. |
 | No notifications | Another daemon owns the D-Bus name. Disable it and restart the shell. |
 | Window menu actions, Alt+Tab focus, paste-after-pick or Log Out do nothing | Not on a Lua-config Hyprland 0.55+: run `hyprctl dispatch 'hl.dsp.no_op()'`. |
-| No window previews / glass behind windows | Quickshell built without Hyprland Toplevel Export, or Settings → Dock Behavior → *Live window capture* is off. |
+| No window previews / glass behind windows | Quickshell built without Hyprland Toplevel Export, or Settings → Dock → *Live window capture* is off. |
 | Log | `qs log` (see `qs --help` for selecting the config). |
 
 ## Known issues
@@ -172,14 +172,14 @@ spamming terminals) while live window capture runs. A window closes while a capt
 does not answer that frame, the shell then destroys it, and the compositor drops the Wayland connection. Mitigations:
 
 - Settings → Menu Bar → turn **Real-time glass** off (far fewer captures; the biggest win).
-- Settings → Dock Behavior → turn **Live window capture** off.
+- Settings → Dock → turn **Live window capture** off.
 - The shell already pauses glass captures while windows open/close.
 - Auto-restart it: `sh -c 'while :; do qs -c macshell; sleep 1; done'` as the autostart command.
 
 Glitchy window capture,
 Can be disabled in Settings:
 
-- Settings → Dock Behavior → turn **Live window capture** off.
+- Settings → Dock → turn **Live window capture** off.
 
 Reproduced on Hyprland 0.56.2 / Quickshell 0.3.2
 

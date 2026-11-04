@@ -104,7 +104,8 @@ Scope {
     property real glassLiquid: 1.0
     property real glassBlur: 5
     property real barBgOpacity: 0.10          // fill of the separate "macbarbg" layer (0 = layer hidden). Must stay above the layerrule's ignore_alpha (0.05) for Hyprland to blur it
-    property bool glassRealtime: true       // keep every window capture live all the time (no wallpaper-first delay when a popover opens)
+    property bool glassRealtime: false      // false = smart mode: window captures go live only while glass is on screen (or the window sits behind it);
+                                            // true = every capture stays live all the time (old behaviour, costs GPU/CPU/RAM around the clock)
     property bool glassDebug: false
     property string wallpaperPath: ""
     property bool use24h: false
@@ -113,13 +114,15 @@ Scope {
     property bool showBatteryPercent: true
     property bool showTray: true
     property bool showSearch: true
-    property string webSearchEngine: ""   // optional web-search override: a "?q=" style base URL whose encoded query it appends; "" = hand the search straight to the browser, which uses its own default engine
+    property string webSearchEngine: ""   // optional web-search override: a "?q=" style base URL whose encoded query it appends; "" = the browser's own: Firefox family gets the plain term, URL-based browsers get a built-in DuckDuckGo URL (see browserScript)
     property bool weekStartsMonday: false
     property string terminal: ""              // "" = auto-detect at startup (kitty → ghostty → …, see termProbe); pin a value here or in settings.json to force one
     property string launcher: ""              // "" = built-in Spotlight; set a command (rofi, fuzzel, ...) to use an external launcher instead
     property string filesCmd: "xdg-open \"$HOME\""
     property string clipboardCmd: "cliphist list | (fuzzel --dmenu || wofi --dmenu || rofi -dmenu) | cliphist decode | wl-copy"
     property var appUsage: ({})               // launch counts, feeds the "Suggestions" row in Spotlight
+    property var spHiddenApps: []             // desktop ids the user hid from Spotlight search (right-click an app result)
+    property int spHiddenRev: 0               // bumped on every hide/show so result bindings re-run immediately (belt and braces against binding-tracking lag)
     property bool clipHistory: true           // keep a clipboard history for Spotlight → Clipboard (needs wl-clipboard + cliphist)
     property bool clipAutoPaste: true         // after picking a clipboard entry / emoji, paste it into the focused app
     property var emojiRecent: []              // recently used emoji, newest first
@@ -152,7 +155,7 @@ Scope {
     readonly property var settingKeys: ["barEnabled", "darkMode", "accent", "fontFamily", "barHeight", "glassOpacity",
         "barStyle", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "barBgOpacity", "glassRealtime", "glassDebug", "wallpaperPath", "use24h", "showDate",
         "showSeconds", "showBatteryPercent", "showTray", "showSearch", "webSearchEngine", "barLogoMode", "barCustomLogoPath", "barWidgets", "weekStartsMonday", "terminal", "launcher",
-        "filesCmd", "clipboardCmd", "appUsage", "clipHistory", "clipAutoPaste", "emojiRecent", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
+        "filesCmd", "clipboardCmd", "appUsage", "spHiddenApps", "clipHistory", "clipAutoPaste", "emojiRecent", "powerMode", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
     // Optional bar widgets; tray and Spotlight use their existing showTray/showSearch settings.
     property var barWidgets: ["appleMenu", "appMenus", "volume", "keyboard", "reminders", "notifications", "bluetooth", "privacy", "controlCenter", "clock"]
     function barWidgetEnabled(id) { return barWidgets.indexOf(id) >= 0; }
@@ -375,6 +378,15 @@ Scope {
                 ctx.globalAlpha = 1;
                 circ(9, 14.6, 1.3); ctx.fill();
                 if (flag) line(2.5, 2.5, 15.5, 15.5);
+            } else if (k === "ethernet") {
+                // RJ45: cable neck on top, plug body, pins rising into the body from below
+                ctx.beginPath(); ctx.rect(7.4, 3.6, 3.2, 3.1); ctx.fill();          // cable neck
+                ctx.beginPath(); ctx.moveTo(4.2, 6.7); ctx.rect(4.2, 6.7, 9.6, 9.3); ctx.stroke();   // plug shell
+                var pinYTop = 13.4;
+                for (i2 = 0; i2 < 7; i2++) {
+                    var px = 5.4 + i2 * 1.46;
+                    line(px, pinYTop, px, 16);
+                }
             } else if (k === "bluetooth") {
                 poly([5, 5.5, 13, 12.5, 9, 16, 9, 2, 13, 5.5, 5, 12.5], false);
                 if (flag) line(2.5, 2.5, 15.5, 15.5);
@@ -1418,6 +1430,22 @@ Scope {
     readonly property bool charging: hasBattery && (bat.state === UPowerDeviceState.Charging
                                                      || bat.state === UPowerDeviceState.FullyCharged)
 
+    // batteries report seconds; "1:23" is the shape macOS shows for battery estimates
+    function fmtBatteryTime(s) {
+        if (s === undefined || s === null || s <= 0 || s >= 31536000) return "";
+        var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+        if (m >= 60) { h += 1; m = 0; }
+        if (h === 0 && m === 0) return "";
+        return h > 0 ? (h + ":" + String(m).padStart(2, "0") + " h") : (m + " min");
+    }
+    readonly property string batLine: {
+        if (!hasBattery) return "";
+        if (bat.state === UPowerDeviceState.FullyCharged) return "Fully Charged";
+        if (charging) { var f = fmtBatteryTime(bat.timeToFull); return f !== "" ? "Charging · " + f + " until full" : "Charging"; }
+        if (bat.state === UPowerDeviceState.Discharging) { var r = fmtBatteryTime(bat.timeToEmpty); return r !== "" ? r + " remaining" : "On Battery"; }
+        return "Power Adapter";
+    }
+
     // media
     readonly property var player: {
         var ps = Mpris.players.values, best = null;
@@ -1567,6 +1595,8 @@ Scope {
             }
         }
     }
+    // ethernet is "on line" whenever an ethernet profile has a live device (cable plugged in)
+    readonly property bool ethUp: otherConnections.some(function (r) { return r.type === "802-3-ethernet" && r.active; })
     function toggleConnection(c) {
         if (!c) return;
         var args = c.active ? ["nmcli", "connection", "down", "id", c.name] : ["nmcli", "connection", "up", "id", c.name];
@@ -1666,6 +1696,70 @@ Scope {
         onExited: root.btBusy = ""
     }
     Timer { id: btAfter; interval: 1200; onTriggered: { root.scanBt(); root.refreshBt(); } }
+
+    // ── power modes (auto-cpufreq): picked from the battery popover, applied via pkexec ──
+    property string powerMode: "balanced"     // balanced = hand control back to the auto-cpufreq daemon (--force reset)
+    property bool cpufreqBusy: false          // a mode change is running (pkexec can take a moment)
+    property bool cfPopOpen: false
+    readonly property var cpufreqModes: [
+        { id: "performance", label: "Performance" },
+        { id: "balanced", label: "Balanced" },
+        { id: "powersave", label: "Power Save" }
+    ]
+    function setCpufreqMode(m) {
+        if (root.cpufreqBusy || m === root.powerMode) return;
+        root.cpufreqBusy = true;
+        cfModeProc.targetMode = m;
+        // balanced intentionally runs --force reset: the daemon then decides by power state,
+        // exactly like auto-cpufreq's own "normal mode"
+        cfModeProc.command = ["pkexec", "auto-cpufreq", "--force", m === "balanced" ? "reset" : m];
+        cfModeProc.running = true;
+    }
+    Process {
+        id: cfModeProc
+        command: []
+        property string targetMode: ""
+        stdout: StdioCollector { }
+        onExited: {
+            root.cpufreqBusy = false;
+            root.cpufreqProbe();                 // turbo may have been reset by the daemon
+            if (exitCode === 0) root.powerMode = cfModeProc.targetMode;   // only adopt on success (pkexec declined = non-zero)
+            else cpufreqTimerKick.restart();
+        }
+    }
+    function setCpufreqTurbo(t) {
+        cfTurboProc.command = ["pkexec", "auto-cpufreq", "--turbo", t ? "always" : "auto"];
+        cfTurboProc.running = true;
+    }
+    Process {
+        id: cfTurboProc
+        command: []
+        stdout: StdioCollector { }
+        onExited: root.cpufreqProbe()
+    }
+    // live state: current governor + whether turbo boost is allowed right now
+    property string cpuGov: ""
+    property bool turbo: true
+    function cpufreqProbe() { if (!cfProbe.running) cfProbe.running = true; }
+    Process {
+        id: cfProbe
+        command: ["sh", "-c",
+            "g=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null); "
+            + "b=$(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null); "
+            + "t=$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null); "
+            + "[ -z \"$b\" ] && [ -n \"$t\" ] && b=$((1 - (t + 0))); "
+            + "echo ${g:-?} ${b:-?}"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var p = text.trim().split(/\s+/);
+                root.cpuGov = p[0] === "?" ? "" : p[0];
+                if (p[1] !== undefined && p[1] !== "?") root.turbo = (p[1] === "1");
+            }
+        }
+    }
+    Timer { id: cfProbeTimer; interval: 5000; repeat: true; running: root.cfPopOpen; onTriggered: root.cpufreqProbe() }
+    Timer { id: cpufreqTimerKick; interval: 1500; onTriggered: root.cpufreqProbe() }
     readonly property bool airplane: !wifiOn && !btOn
     function toggleAirplane() {
         sh(airplane ? "rfkill unblock all" : "rfkill block all");
@@ -1673,7 +1767,7 @@ Scope {
         settleTimer.restart();
     }
     Timer { id: settleTimer; interval: 900; onTriggered: { root.refreshWifi(); root.refreshBt(); } }
-    Timer { interval: 6000; repeat: true; running: true; triggeredOnStart: true; onTriggered: { root.refreshWifi(); root.refreshBt(); } }
+    Timer { interval: 6000; repeat: true; running: true; triggeredOnStart: true; onTriggered: { root.refreshWifi(); root.refreshBt(); root.refreshConnections(); } }
 
     // brightness
     property real brightness: 0.5
@@ -1694,8 +1788,15 @@ Scope {
         onTriggered: Quickshell.execDetached(["brightnessctl", "-q", "set", Math.max(1, Math.round(root.brightness * 100)) + "%"])
     }
     function setBrightness(v) { osdQuiet("brightness", 1800); brightness = Math.max(0.01, Math.min(1, v)); brightApply.restart(); }
+    // fn-key step: show the OSD immediately with the predicted value (keys step 5%)
+    // instead of waiting for the brightnessctl -m refresh round-trip (~100ms of dead
+    // time). The refresh lands right after and onBrightnessChanged updates the OSD
+    // in place with the exact value.
+    function brightnessStep(dir) {
+        showOsd("brightness", Math.max(0.01, Math.min(1, brightness + dir * 0.05)));
+        refreshBrightness();
+    }
     onBrightnessChanged: showOsd("brightness", brightness)
-    Timer { interval: 850; repeat: true; running: true; onTriggered: root.refreshBrightness() }
     // ═════════════ KEYBOARD LAYOUT ═════════════
     // Hyprland announces every change with an `activelayout` event, so the label updates immediately (no polling).
     // `hyprctl devices` is only read at start-up and after a config reload, to learn which layouts are configured.
@@ -1995,12 +2096,20 @@ Scope {
     }
 
     // Hand a web query to the user's browser, so the search runs on the default engine they
-    // already configured. Firefox-family browsers have `--search`; Chromium-family treats a
-    // plain string as a search too; xdg-open is the last resort. A URL opens as-is.
+    // already configured. Firefox-family browsers understand `--search <term>` and get the
+    // plain search term. Chromium-family browsers cannot be told "search this" from the CLI:
+    // they "URL-fix" a bare argument themselves and navigating a one-word query turns it into
+    // `http://<word>/` — a dead, unencrypted URL the browser flags instead of searching
+    // (exactly the broken "Search the web for …" behaviour). So for them the query is resolved
+    // into a real search-engine URL (DuckDuckGo by default) that always parses.
     // (Settings · webSearchEngine still wins when the user set an engine explicitly.)
     readonly property string browserScript: [
         "q=\"$1\"",
         "case \"$q\" in *'://'*|'www.'*) exec xdg-open \"$q\";; esac",
+        "# spot's built-in engine for the URL-building browsers",
+        "enc() { python3 -c 'import sys,urllib.parse;sys.stdout.write(urllib.parse.quote(sys.argv[1]))' \"$1\"; }",
+        "se=\"https://duckduckgo.com/?q=\"",
+        "# the default browser's own desktop entry, if resolvable",
         "b=$(xdg-settings get default-web-browser 2>/dev/null | sed 's/\\.desktop$//')",
         "for d in \"$HOME/.local/share/applications/$b.desktop\" \"${XDG_DATA_HOME:-$HOME/.local/share}/applications/$b.desktop\" /usr/share/applications/$b.desktop /usr/local/share/applications/$b.desktop; do",
         "  [ -r \"$d\" ] || continue",
@@ -2008,14 +2117,15 @@ Scope {
         "  c=${c##*/}",
         "  command -v \"$c\" >/dev/null 2>&1 || continue",
         "  case \"$c\" in *firefox*|*zen*|*librewolf*|*waterfox*|*floorp*) exec \"$c\" --search \"$q\";; esac",
-        "  exec \"$c\" \"$q\"",
+        "  # URL-based browser: give it a well-formed search URL, never a bare term",
+        "  exec \"$c\" \"$se$(enc \"$q\")\"",
         "done",
         "for c in firefox zen-browser zen librewolf waterfox floorp chromium chromium-browser google-chrome chrome vivaldi brave; do",
         "  command -v \"$c\" >/dev/null 2>&1 || continue",
         "  case \"$c\" in *firefox*|*zen*|*librewolf*|*waterfox*|*floorp*) exec \"$c\" --search \"$q\";; esac",
-        "  exec \"$c\" \"$q\"",
+        "  exec \"$c\" \"$se$(enc \"$q\")\"",
         "done",
-        "exec xdg-open \"$q\" 2>/dev/null || true"
+        "exec xdg-open \"$se$(enc \"$q\")\" 2>/dev/null || true"
     ].join("\n")
 
     function webSearch(q) {
@@ -2309,9 +2419,29 @@ Scope {
         var p = Quickshell.iconPath(name, true);
         return p !== "" ? p : fb;
     }
+    // Spotlight knows apps through their .desktop files, but this shell's own Settings
+    // window has none of its own (org.quickshell.desktop is NoDisplay). Give it a
+    // synthetic entry so it can be searched and opened from Spotlight (the menu bar
+    // and the keyboard shortcut keep working exactly as before).
+    readonly property string settingsIconPath: {
+        var u = Qt.resolvedUrl("assets/settings.png").toString();
+        return u.indexOf("file://") === 0 ? u.substring(7) : u;
+    }
+    readonly property var shellSettingsEntry: ({
+        id: "org.quickshell",
+        name: "System Settings",
+        genericName: "Settings",
+        comment: "Appearance, Dock, Menu Bar, widgets and the rest of the shell's options",
+        keywords: ["settings", "preferences", "macshell", "dock", "menu bar", "appearance", "wallpaper"],
+        categories: ["Settings"],
+        icon: settingsIconPath,
+        noDock: true,                           // not pinnable: the dock has no .desktop entry to pin
+        execute: function () { root.openSettings("general"); }
+    })
     readonly property var appList: {
         var vals = DesktopEntries.applications.values, out = [];
         for (var i = 0; i < vals.length; i++) if (!vals[i].noDisplay) out.push(vals[i]);
+        out.push(root.shellSettingsEntry);
         out.sort(function (a, b) { return a.name.localeCompare(b.name); });
         return out;
     }
@@ -2332,17 +2462,20 @@ Scope {
         return "Utilities";
     }
     readonly property var appSections: {
+        var hidden = root.spHiddenApps;                 // binding-level read: the grid refilters the moment the hidden list changes
         var list = appList, usage = appUsage, i, j;
-        var used = list.filter(function (e) { return (usage[e.id] || 0) > 0; });
+        var used = list.filter(function (e) { return (usage[e.id] || 0) > 0 && hidden.indexOf(String(e.id)) < 0; });
         used.sort(function (a, b) { return (usage[b.id] || 0) - (usage[a.id] || 0); });
         var sug = used.slice(0, 10);
         for (i = 0; i < list.length && sug.length < 5; i++) {
             var dup = false;
+            if (hidden.indexOf(String(list[i].id)) >= 0) continue;              // hidden apps don't get suggested either
             for (j = 0; j < sug.length; j++) if (sug[j].id === list[i].id) { dup = true; break; }
             if (!dup) sug.push(list[i]);
         }
         var map = {};
         for (i = 0; i < list.length; i++) {
+            if (hidden.indexOf(String(list[i].id)) >= 0) continue;              // hidden apps are invisible in the All Apps grid too
             var cat = appCategory(list[i]);
             if (!map[cat]) map[cat] = [];
             map[cat].push(list[i]);
@@ -2353,10 +2486,12 @@ Scope {
     }
     function searchApps(q) {
         q = (q || "").trim().toLowerCase();
+        var hidden = root.spHiddenApps;       // local read of the live list
         if (q === "") return [];
         var list = appList, hits = [];
         for (var i = 0; i < list.length; i++) {
             var e = list[i], n = e.name.toLowerCase(), sc = 0;
+            if (hidden.indexOf(String(e.id)) >= 0) continue;    // hidden from Spotlight via right-click
             if (n === q) sc = 100;
             else if (n.indexOf(q) === 0) sc = 80;
             else if (n.indexOf(" " + q) >= 0) sc = 60;
@@ -2385,18 +2520,62 @@ Scope {
         e.execute();
     }
     function appRunner(e) { return function () { launchApp(e); }; }
+
+    // ── Spotlight right-click menu: Hide App / Pin to Dock ──
+    function spotIsHidden(e) { return root.spHiddenApps.indexOf(String(e.id)) >= 0; }
+    function spotToggleHidden(e) {
+        var id = String(e.id), out = root.spHiddenApps.slice(), p = out.indexOf(id);
+        if (p >= 0) out.splice(p, 1); else out.push(id);
+        root.spHiddenApps = out;
+        root.spHiddenRev++;                   // nudge every binding that read searchApps(): instant re-filter
+        root.saveTimer.restart();
+    }
+    function spotIsPinned(e) {
+        if (!e || e.noDock) return false;
+        var d = root.hub && root.hub.dock ? root.hub.dock : null;
+        if (!d) return false;
+        var id = String(e.id).replace(/\.desktop$/, "").toLowerCase(), p = (d.pinned || []), i;
+        for (i = 0; i < p.length; i++)
+            if (String(p[i]).replace(/\.desktop$/, "").toLowerCase() === id) return true;
+        return false;
+    }
+    function spotPin(e) {
+        if (!e || e.noDock) return;           // synthetic entries have no desktop file to pin
+        var d = root.hub && root.hub.dock ? root.hub.dock : null;
+        if (!d) return;                       // no dock instantiated: nothing to pin into
+        d.togglePin({ key: String(e.id).replace(/\.desktop$/, "").toLowerCase(), entry: e });
+    }
+    // used by the Settings → Menu Bar → Hidden Apps card (the escape hatch once apps are
+    // invisible everywhere in Spotlight itself)
+    function spotEntryById(id) {
+        var list = appList;
+        for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i];
+        return null;
+    }
+    function spotRestore(id) {
+        var p = root.spHiddenApps.indexOf(String(id));
+        if (p < 0) return;
+        var out = root.spHiddenApps.slice();
+        out.splice(p, 1);
+        root.spHiddenApps = out;
+        root.spHiddenRev++;
+        root.saveTimer.restart();
+    }
+    // Settings → Spotlight → Hidden Apps card resolves each hidden id to its desktop
+    // entry for the name + icon (was calling a missing function → TypeError storm).
+    function spEntryById(id) { return root.lookup(String(id)); }
     function appItems(q, limit) {
         var r = searchApps(q), out = [];
         for (var i = 0; i < r.length && i < limit; i++)
             out.push({ title: r[i].name, sub: r[i].genericName || "Application", icon: iconSrc(r[i].icon),
-                       glyph: "", confirm: false, run: appRunner(r[i]) });
+                       glyph: "", confirm: false, entry: r[i], run: appRunner(r[i]) });
         return out;
     }
     function actionItems(q) {
         var all = [
             { title: "Lock Screen", glyph: "lock", run: function () { sh("~/.config/quickshell/MacLock/lock-via-ipc.sh"); } },
             { title: "Sleep", glyph: "moon", run: function () { sh("systemctl suspend"); } },
-            { title: "System Settings\u2026", glyph: "gear", run: function () { sh("hyprmod"); } },
+            { title: "Hyprland Settings\u2026", glyph: "gear", run: function () { sh("hyprmod"); } },
             { title: "Log Out", glyph: "logout", confirm: true, run: function () { root.logOut(); } },
             { title: "Restart", glyph: "restart", confirm: true, run: function () { sh("systemctl reboot"); } },
             { title: "Shut Down", glyph: "power", confirm: true, run: function () { sh("systemctl poweroff"); } }
@@ -2681,6 +2860,18 @@ Scope {
         function screen(): void { root.shotFinish("", ""); }
         function window(): void { root.shotWindow(root.activeWin); }
     }
+    // Hyprland's XF86MonBrightness binds call `qs ipc call brightnessosd up|down` right
+    // after changing brightness. This handler used to live in the old BrightnessOsd
+    // and was never re-wired, so fn-key feedback silently depended on the poll.
+    // The step functions predict the new value (the keys step 5%) so the OSD pops
+    // instantly; the async refresh then corrects it to the exact hardware value.
+    // `show` stays for manual calls: refresh only, OSD pops when the value lands.
+    IpcHandler {
+        target: "brightnessosd"
+        function show(): void { root.refreshBrightness(); }
+        function up(): void { root.brightnessStep(1); }
+        function down(): void { root.brightnessStep(-1); }
+    }
     Variants {
         model: root.shotOpen ? Quickshell.screens : []
         PanelWindow {
@@ -2847,8 +3038,9 @@ Scope {
     }
     function resetSettings() {
         barEnabled = true;
-        darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = true;
+        darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = false;
         barStyle = "liquid"; use24h = false; showDate = true; showSeconds = false; showBatteryPercent = true;
+        powerMode = "balanced";
         showTray = true; showSearch = true;
         barLogoMode = "apple"; barCustomLogoPath = "";
         terminal = "";                          // back to auto-detect
@@ -3716,6 +3908,11 @@ Scope {
                 property var trayItem: null         // SystemTrayItem whose menu is open in the tray popover
                 property var trayStack: []          // submenu path (QsMenuEntry objects) inside that menu
                 Timer { interval: 400; repeat: true; running: ui.pop === "vol"; onTriggered: root.audioTick++ }
+                // brightness poll: safety net for changes made outside the shell (rare) - fn keys
+                // announce themselves via the brightnessosd IPC handler and the control-center
+                // slider drives the value itself. Slow 5s baseline, fast while the Display tile
+                // is on screen; was a `brightnessctl -m` spawn every 850ms, forever.
+                Timer { interval: ui.pop === "cc" ? 850 : 5000; repeat: true; running: true; onTriggered: root.refreshBrightness() }
                 readonly property bool toastScreen: Quickshell.screens.length === 1 || (Hyprland.focusedMonitor !== null && Hyprland.focusedMonitor.name === win.modelData.name)
                 readonly property bool toastsShown: toastScreen && notifToasts.count > 0
 
@@ -3757,12 +3954,18 @@ Scope {
                 property bool spReqCalm: false
                 property int emCat: 0                   // emoji category tab (0 = recents)
                 property bool spHover: false            // spSel was just changed by the pointer, so lists must not scroll to it
+                property var spMenuEntry: null         // app the Spotlight right-click mini menu is open for; null = menu closed
+                property real spMenuX: 0               // where the menu was opened (spot-local coordinates)
+                property real spMenuY: 0
                 readonly property int emCols: 12
                 readonly property bool spFull: spMode === "apps" || spMode === "clip" || spMode === "emoji"
-                property var spResults: spMode === "actions" ? root.actionItems(spQuery)
-                                        : (spMode === "clip" ? root.clipFiltered(spQuery)
-                                        : (spMode === "emoji" ? root.emojiItems(spQuery, emCat)
-                                        : (spQuery.trim() === "" ? [] : root.homeItems(spQuery))))
+                property var spResults: {
+                    var rev = root.spHiddenRev;   // direct read at binding level: hiding/showing an app re-filters the results instantly
+                    if (spMode === "actions") return root.actionItems(spQuery);
+                    if (spMode === "clip") return root.clipFiltered(spQuery);
+                    if (spMode === "emoji") return root.emojiItems(spQuery, emCat);
+                    return spQuery.trim() === "" ? [] : root.homeItems(spQuery);
+                }
 
                 function spSetMode(m) {
                     spMode = m; spQuery = ""; spHoverLabel = ""; spSel = 0; armed = ""; clipMenu = false;
@@ -3799,7 +4002,7 @@ Scope {
                 }
                 function spKey(ev) {
                     var k = ev.key, n = spResults.length;
-                    if (k === Qt.Key_Escape) { spEscape(); ev.accepted = true; }
+                    if (k === Qt.Key_Escape) { if (ui.spMenuEntry) ui.spMenuEntry = null; else spEscape(); ev.accepted = true; }
                     else if (spMode === "emoji" && (k === Qt.Key_Left || k === Qt.Key_Right || k === Qt.Key_Up || k === Qt.Key_Down)) {
                         var d = k === Qt.Key_Left ? -1 : (k === Qt.Key_Right ? 1 : (k === Qt.Key_Up ? -emCols : emCols));
                         if (n > 0) spSel = Math.max(0, Math.min(n - 1, Math.min(spSel, n - 1) + d));
@@ -3830,6 +4033,15 @@ Scope {
                     o[name] = !o[name];
                     spExpanded = o;
                 }
+                // open the right-click mini menu for an app; the position is the pointer in
+                // fromItem's coordinates, mapped into this item's space for anchoring
+                function spOpenAppMenu(entry, fromItem, fx, fy) {
+                    if (!entry) return;
+                    var p = fromItem.mapToItem(spot, fx, fy);
+                    ui.spMenuEntry = entry;
+                    ui.spMenuX = p.x;
+                    ui.spMenuY = p.y;
+                }
                 // gutter for check marks when any entry of the open menu has one
                 readonly property bool menuLead: {
                     for (var i = 0; i < menuModel.length; i++) if (menuModel[i].checked !== undefined) return true;
@@ -3841,7 +4053,7 @@ Scope {
                 }
                 // bounding box of all glass that is on screen right now (popovers, notification popups) + a refraction margin
                 readonly property rect glassRect: {
-                    var items = [menuPop, cc, cal, wifiPop, btPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
+                    var items = [menuPop, cc, cal, wifiPop, btPop, batPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
                     for (var i = 0; i < items.length; i++) {
                         var it = items[i];
                         if (!it.visible) continue;
@@ -3851,7 +4063,7 @@ Scope {
                     return any ? Qt.rect(x0 - 64, y0 - 64, x1 - x0 + 128, y1 - y0 + 128) : Qt.rect(0, 0, 0, 0);
                 }
                 readonly property bool isMenu: ["apple", "app", "file", "edit", "view", "window", "help"].indexOf(pop) >= 0
-                readonly property bool anyVisible: menuPop.visible || cc.visible || cal.visible || wifiPop.visible || trayPop.visible || notifPop.visible || toastArea.visible || remPop.visible || remToastArea.visible || volPop.visible || kbPop.visible
+                readonly property bool anyVisible: menuPop.visible || cc.visible || cal.visible || wifiPop.visible || btPop.visible || batPop.visible || trayPop.visible || notifPop.visible || toastArea.visible || remPop.visible || remToastArea.visible || volPop.visible || kbPop.visible
                 onAnyVisibleChanged: root.popCount += (anyVisible ? 1 : -1)
                 onPopChanged: {
                     armed = "";
@@ -3863,8 +4075,11 @@ Scope {
                     root.remOpen = (pop === "rem");
                     if (pop === "rem") root.remResetDraft();
                     if (pop === "wifi") { root.wifiError = ""; root.scanWifi(); root.refreshConnections(); }
+                    root.cfPopOpen = (pop === "bat");
+                    if (pop === "bat") root.cpufreqProbe();
                     if (pop === "spot") {
                         spMode = "home"; spQuery = ""; spSel = 0; spExpanded = ({}); clipMenu = false;
+                        spMenuEntry = null;
                         spInput.text = ""; appsInput.text = ""; clipInput.text = ""; emojiInput.text = "";
                         spFocusTimer.restart();
                     }
@@ -4002,13 +4217,15 @@ Scope {
                                         function onCaptureQuietChanged() { hushT.interval = 20 + Math.random() * 600; hushT.restart(); }
                                     }
                                     Timer { id: hushT; onTriggered: sv.hush = root.captureQuiet }
-                                    // REAL-TIME: with glassRealtime every capture stays live all the time, so a popover opens on
+                                    // REAL-TIME vs SMART: with glassRealtime every capture stays live all the time, so a popover opens on
                                     // frames that are already current and nothing is torn down / restarted when it opens (the restart
-                                    // is what used to show the bare wallpaper first). Backdrops that live in a window which is
-                                    // hidden right now (Spotlight, switcher, ...) are only kept warm with slow single captures.
+                                    // is what used to show the bare wallpaper first). In the default smart mode, captures go live only
+                                    // while some glass is actually on screen (or the window sits behind the glass region), and the
+                                    // 250 ms single-capture keep-warm below keeps every backdrop current otherwise, so opening a
+                                    // popover still shows ready-made pixels instead of the bare wallpaper.
                                     // While recording only the windows behind visible glass stay live (so the glass is real-time exactly where you see it,
                                     // e.g. a video behind the Control Center), every other window sits out.
-                                    live: !gw.gone && !root.captureHeld && bd.hostShown && (!sv.hush || gw.onGlass) && (root.glassRealtime || ui.anyVisible || levelOsd.visible || spotWin.visible || swWin.visible || wpWin.visible)
+                                    live: !gw.gone && !root.captureHeld && bd.hostShown && (!sv.hush || gw.onGlass) && (root.glassRealtime || gw.onGlass || ui.anyVisible || levelOsd.visible || spotWin.visible || swWin.visible || wpWin.visible)
                                     onCaptureSourceChanged: {
                                         // a brand-new capture grabs its first frame immediately instead of waiting for the timer
                                         // (a short delay: asking before the capture context exists only logged "no recording context is ready")
@@ -4021,10 +4238,14 @@ Scope {
                                     }
                                     // single captures: hidden backdrops stay warm once a second (their window goes live the moment it opens);
                                     // while recording only a backdrop that is actually on screen refreshes, slowly
+                                    // keep-warm timer: DISABLED. It fired captureFrame() on non-live captures, but
+                                    // a ScreencopyView with no recording context rejects every call ("Cannot
+                                    // capture frame"), so in smart mode this was 4 failed GPU attempts/sec +
+                                    // log spam with zero benefit - and under always-live the captures are live,
+                                    // so the timer never ran anyway. Popover fade-in covers the first frames.
                                     Timer {
                                         interval: sv.hush ? 1500 : (bd.hostShown ? 250 : 1000); repeat: true
-                                        running: !root.captureHeld && !sv.live && sv.captureSource !== null
-                                                 && (!sv.hush || (bd.hostShown && (ui.anyVisible || spotWin.visible || swWin.visible || wpWin.visible)))
+                                        running: false
                                         onTriggered: { if (typeof sv.captureFrame === "function") sv.captureFrame(); }
                                     }
                                 }
@@ -4340,6 +4561,7 @@ Scope {
                         }
                         // battery
                         Item {
+                            id: batBtn
                             visible: root.hasBattery
                             width: root.hasBattery ? batRow.width + 14 : 0; height: 28
                             Row {
@@ -4380,7 +4602,7 @@ Scope {
                                     }
                                 }
                             }
-                            MouseArea { anchors.fill: parent; onClicked: ui.openPop("cc", 0) }
+                            MouseArea { anchors.fill: parent; onClicked: { root.cpufreqProbe(); ui.openPop("bat", batBtn.mapToItem(ui, 0, 0).x + batBtn.width / 2); } }
                         }
                         // reminders (click, or ALT + R from anywhere)
                         Item {
@@ -4430,7 +4652,8 @@ Scope {
                                 width: parent.width - 2; height: parent.height - 6; radius: 6
                                 color: ui.pop === "wifi" ? pal.hover : "transparent"
                             }
-                            Glyph { anchors.centerIn: parent; width: 16; height: 16; kind: "wifi"; level: root.wifiOn ? (root.wifiLevel || 1) : 3; flag: !root.wifiOn; color: root.wifiOn ? pal.fg : pal.fg2 }
+                            Glyph { visible: !root.ethUp; anchors.centerIn: parent; width: 16; height: 16; kind: "wifi"; level: root.wifiOn ? (root.wifiLevel || 1) : 3; flag: !root.wifiOn; color: root.wifiOn ? pal.fg : pal.fg2 }
+                            Glyph { visible: root.ethUp; anchors.centerIn: parent; width: 16; height: 16; kind: "ethernet"; color: pal.fg }
                             MouseArea { anchors.fill: parent; onClicked: ui.openPop("wifi", wifiBtn.mapToItem(ui, 0, 0).x) }
                         }
                         // search
@@ -6264,6 +6487,167 @@ Scope {
                     }
                 }
 
+                // ═════════ power: battery + auto-cpufreq modes (Performance / Balanced / Power Save) ═════════
+                Item {
+                    id: batPop
+                    z: 10
+                    width: 312
+                    height: batCol.height + 24
+                    x: Math.max(6, Math.min(ui.width - width * root.barPopupScale - 8, ui.menuX + 14 - width / 2))
+                    y: root.barHeight + 6
+                    opacity: ui.pop === "bat" ? 1 : 0
+                    visible: opacity > 0
+                    scale: root.barPopupScale * (ui.pop === "bat" ? 1 : 0.96)
+                    transformOrigin: Item.Top
+                    Behavior on opacity { NumberAnimation { duration: 110 } }
+                    Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+                    LGlass {
+                        anchors.fill: parent
+                        backdrop: glassBackdrop.item
+                        shaderUrl: root.glassShaderUrl
+                        liquid: root.liquidActive
+                        dark: root.darkMode
+                        bx: batPop.x; by: batPop.y
+                        cornerR: 22
+                        tint: root.glassOpacity
+                        thickness: 24
+                        strength: 0.7 * root.glassLiquid
+                        rim: root.glassRim
+                        grain: root.glassGrain
+                        blur: root.glassBlur
+                        debug: root.glassDebug
+                        onShaderError: root.glassState = "failed"
+                    }
+                    MouseArea { anchors.fill: parent }          // swallow clicks on empty glass so the popover doesn't close
+
+                    Column {
+                        id: batCol
+                        x: 12; y: 12
+                        width: parent.width - 24
+                        spacing: 6
+
+                        // header: title + live percent
+                        Item {
+                            width: parent.width; height: 32
+                            Text {
+                                x: 6; anchors.verticalCenter: parent.verticalCenter
+                                text: "Battery"
+                                color: pal.fg
+                                font.family: pal.fam; font.pixelSize: 15; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                anchors.right: parent.right; anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.batPct + "%"
+                                color: root.batPct <= 15 && !root.charging ? "#FF453A" : pal.fg
+                                font.family: pal.fam; font.pixelSize: 15; font.weight: Font.DemiBold
+                            }
+                        }
+                        Rectangle { width: parent.width; height: 1; color: pal.sep }
+
+                        Text {
+                            leftPadding: 6
+                            width: parent.width
+                            text: root.batLine
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 12
+                        }
+
+                        // ── power mode: Performance / Balanced / Power Save ──
+                        // backed by auto-cpufreq: performance & power save are forced governs,
+                        // balanced runs `--force reset` so the daemon decides by power state.
+                        Text {
+                            leftPadding: 6; topPadding: 4
+                            text: "Power Mode"
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 11; font.weight: Font.DemiBold
+                        }
+                        Rectangle {
+                            width: parent.width; height: 34
+                            radius: 9
+                            color: root.darkMode ? "#2C2C2E" : "#EEEEF0"
+                            border.width: 1
+                            border.color: pal.sep
+                            Row {
+                                id: segRow
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                spacing: 2
+                                Repeater {
+                                    model: root.cpufreqModes
+                                    delegate: Item {
+                                        id: seg
+                                        required property var modelData
+                                        width: (parent.width - 4) / 3
+                                        height: parent.height
+                                        readonly property bool active: root.powerMode === modelData.id
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: 7
+                                            color: seg.active ? root.accent : (segMa.containsMouse ? seg.active ? root.accent : pal.hover : "transparent")
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: root.cpufreqBusy && seg.active ? "…" : seg.modelData.label
+                                            color: seg.active ? "#fff" : (segMa.containsMouse ? pal.fg : pal.fg2)
+                                            font.family: pal.fam; font.pixelSize: 12; font.weight: seg.active ? Font.DemiBold : Font.Normal
+                                        }
+                                        MouseArea {
+                                            id: segMa
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            enabled: !root.cpufreqBusy
+                                            onClicked: root.setCpufreqMode(seg.modelData.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: root.cpuGov !== ""
+                            leftPadding: 6
+                            width: parent.width
+                            // auto-cpufreq's own words for what is currently on the CPU
+                            text: root.powerMode === "balanced"
+                                  ? "Balanced (auto · daemon decides)"
+                                  : root.powerMode.charAt(0).toUpperCase() + root.powerMode.slice(1) + " (forced · " + root.cpuGov + ")"
+                            color: pal.fg2
+                            font.family: pal.fam; font.pixelSize: 11
+                        }
+
+                        // ── turbo boost ──
+                        Rectangle { width: parent.width; height: 1; color: pal.sep }
+                        Row {
+                            width: parent.width; spacing: 6
+                            Column {
+                                width: parent.width - 52 - 20
+                                spacing: 1
+                                Text {
+                                    x: 6
+                                    text: "Turbo Boost"
+                                    color: pal.fg
+                                    font.family: pal.fam; font.pixelSize: 12
+                                }
+                                Text {
+                                    x: 6; width: parent.width - 12
+                                    wrapMode: Text.WordWrap
+                                    text: "on = always boost clocks · off = auto (daemon decides)"
+                                    color: pal.fg2
+                                    font.family: pal.fam; font.pixelSize: 10
+                                }
+                            }
+                            PSwitch {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: parent.width - width - 6
+                                t: pal
+                                checked: root.turbo
+                                onToggled: v => { root.setCpufreqTurbo(v); root.turbo = v; }
+                            }
+                        }
+                    }
+                }
+
                 // ═════════ calendar ═════════
                 Item {
                     id: cal
@@ -7663,12 +8047,11 @@ Scope {
                     }
                     Timer { id: lumDebounce; interval: 500; onTriggered: lumHub.sampleNow() }
                     Timer { interval: 1500; running: true; onTriggered: lumHub.sampleNow() }                       // once after start-up
-                    Timer { interval: 6000; repeat: true; running: spot.adaptive && !spotWin.visible; onTriggered: lumHub.sampleNow() }   // safety poll while hidden
-                    Connections {
-                        target: root
-                        function onGlassClientsChanged() { lumDebounce.restart(); }
-                        function onMonDataChanged() { lumDebounce.restart(); }
-                    }
+                    // slow safety poll only: wallpaper changes don't emit Hyprland events, so the hidden
+                    // pre-measurement needs some poll. Opening Spotlight samples fresh anyway (onPopChanged
+                    // above), and window/workspace changes no longer trigger pre-samples - they fired on
+                    // every 500ms-debounced geometry change (constant grim spawns while dragging windows).
+                    Timer { interval: 30000; repeat: true; running: spot.adaptive && !spotWin.visible; onTriggered: lumHub.sampleNow() }
                     Connections { target: spotWin; function onVisibleChanged() { if (!spotWin.visible) lumDebounce.restart(); } }
                     Timer {
                         interval: lumHub.probeTicks < 25 ? 40 : 300; repeat: true; triggeredOnStart: true
@@ -8184,12 +8567,99 @@ Scope {
                                     MouseArea {
                                         anchors.fill: parent
                                         hoverEnabled: true
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         onEntered: ui.spSel = rr.index
-                                        onClicked: ui.spActivate(rr.index)
+                                        onClicked: mouse => {
+                                            if (mouse.button === Qt.RightButton) {
+                                                ui.spSel = rr.index;
+                                                // right-click on an app result: the little macOS options menu
+                                                ui.spOpenAppMenu(rr.modelData.entry, rr, mouse.x, mouse.y);
+                                            } else ui.spActivate(rr.index);
+                                        }
                                     }
                                 }
                             }
                         }
+                        }
+                    }
+
+                    // ── right-click mini menu on an app result (the macOS options menu) ──
+                    // Small warm-glass popup anchored at the pointer, reusing the panels'
+                    // glass (gx: spg) and the Spotlight palette. Hide App only excludes the
+                    // app from Spotlight *search* (it stays installed & launchable — the
+                    // Applications panel still lists it, where the menu offers "Show App");
+                    // Pin to Dock talks to the dock's own pinned list.
+                    Item {
+                        id: spMenu
+                        z: 30
+                        readonly property bool open: ui.spMenuEntry !== null
+                        width: 212
+                        height: 12 + spMenuCol.height
+                        x: Math.max(8, Math.min(spot.width - width - 8, ui.spMenuX - width + 26))
+                        y: Math.max(8, Math.min(spot.height - height - 8, ui.spMenuY + 6))
+                        opacity: open ? 1 : 0
+                        scale: open ? 1 : 0.9
+                        transformOrigin: Item.TopLeft
+                        Behavior on opacity { NumberAnimation { duration: 90 } }
+                        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                        GGlass { anchors.fill: parent; gx: spg; outline: true; cornerR: 14; thickness: 22; strengthMul: 0.55; shadowAmt: 0.5 }
+                        Column {
+                            id: spMenuCol
+                            x: 6; y: 6
+                            width: parent.width - 12
+                            Repeater {
+                                model: {
+                                    if (!spMenu.open) return [];
+                                    var m = [{ label: ui.spMenuEntry && root.spotIsHidden(ui.spMenuEntry) ? "Show App" : "Hide App",
+                                               run: function (e) { if (e) root.spotToggleHidden(e); } }];
+                                    if (!(ui.spMenuEntry && ui.spMenuEntry.noDock))
+                                        m.push({ label: ui.spMenuEntry && root.spotIsPinned(ui.spMenuEntry) ? "Remove from Dock" : "Pin to Dock",
+                                                 run: function (e) { if (e) root.spotPin(e); } });
+                                    return m;
+                                }
+                                delegate: Item {
+                                    id: smi
+                                    required property var modelData
+                                    width: spMenuCol.width
+                                    height: 26
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 6
+                                        color: sma.containsMouse ? root.accent : "transparent"
+                                    }
+                                    Text {
+                                        x: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 24
+                                        elide: Text.ElideRight
+                                        text: smi.modelData.label
+                                        color: sma.containsMouse ? "white" : spPal.fg
+                                        font.family: spPal.fam; font.pixelSize: 13
+                                    }
+                                    MouseArea {
+                                        id: sma
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            // the entry must be read BEFORE closing: the run() bodies
+                                            // take it as an argument, so order never matters
+                                            var e = ui.spMenuEntry;
+                                            ui.spMenuEntry = null;
+                                            if (e && smi.modelData.run) smi.modelData.run(e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // any press elsewhere closes the menu: this sits over the whole panel
+                        // but BELOW the menu row Column (z: -1), so it is still topmost for
+                        // the rows underneath while the menu is open — without stealing the
+                        // menu's own clicks
+                        MouseArea {
+                            anchors.fill: spot
+                            z: -1
+                            enabled: spMenu.open
+                            onClicked: ui.spMenuEntry = null
                         }
                     }
 
@@ -8717,7 +9187,10 @@ Scope {
 
                                 Repeater {
                                     id: appsRep
-                                    model: ui.spQuery.trim() === "" ? root.appSections : root.appSearchSection(ui.spQuery)
+                                    model: {
+                                        var rev = root.spHiddenRev;   // binding-level read: hiding/showing an app rebuilds the grid instantly
+                                        return ui.spQuery.trim() === "" ? root.appSections : root.appSearchSection(ui.spQuery);
+                                    }
                                     delegate: Column {
                                         id: sec
                                         required property var modelData
@@ -8790,7 +9263,11 @@ Scope {
                                                         id: cma
                                                         anchors.fill: parent
                                                         hoverEnabled: true
-                                                        onClicked: { ui.pop = ""; root.launchApp(cell.e); }
+                                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                                        onClicked: mouse => {
+                                                            if (mouse.button === Qt.RightButton) ui.spOpenAppMenu(cell.e, cell, mouse.x, mouse.y);
+                                                            else { ui.pop = ""; root.launchApp(cell.e); }
+                                                        }
                                                     }
                                                 }
                                             }

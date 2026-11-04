@@ -40,6 +40,13 @@ PanelWindow {
 
     mask: Region { item: root.showing ? menuRoot : null }
 
+    // map only while open (+260 ms so the fade-out can finish): these overlays
+    // used to sit mapped as full-screen surfaces 24/7. All position/size/menu
+    // state lives in QML items + JSON state, so the remap looks identical.
+    visible: root.showing || hideTimer.running
+    onShowingChanged: root.showing ? hideTimer.stop() : hideTimer.restart()
+    Timer { id: hideTimer; interval: 260 }
+
     onMenuSizeChanged: if (root.showing) root.setPosition(root.offsetX, root.offsetY)
 
     ListModel { id: todos }

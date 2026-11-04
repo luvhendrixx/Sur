@@ -23,7 +23,6 @@
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Controls
-import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
@@ -35,6 +34,9 @@ Scope {
     // shared helpers from shell.qml (window geometry poller, wallpaper lookup)
     property var hub: null
     property bool dockEnabled: false      // false = no Dock at all (settings window stays available)
+    // settings window's content Flickable, for panes that want to scroll themselves
+    // (e.g. the User pane scrolls its new crop card into view after a pick)
+    property var prefsFlick: null
     readonly property var bar: hub ? hub.bar : null
     readonly property bool captureCut: hub ? hub.captureCut : false
     readonly property bool glassHold: hub ? hub.glassHold : false          // windows opening / closing: the glass's live captures pause, source stays attached
@@ -541,15 +543,11 @@ Scope {
             { id: "profile",    name: "User",         glyph: "profile",    c1: "#8E8E93", c2: "#636366",
               keys: "user profile avatar picture face account name username lock screen change reset image" },
             { id: "dock",       name: "Dock",         glyph: "dock",       c1: "#4FA8FF", c2: "#0A6CFF",
-              keys: "size icon magnification zoom spacing margin distance edge" },
+              keys: "size icon magnification zoom spacing margin distance edge behaviour behavior hide delay labels tooltip indicators bounce trash trashcan display monitor preview thumbnail applications apps pinned keep reset" },
             { id: "menubar",    name: "Menu Bar",     glyph: "menubar",    c1: "#7D7AFF", c2: "#4B48D6",
               keys: "panel bar height clock date seconds 24 hour battery tray search spotlight week monday style liquid bluetooth widget" },
             { id: "appearance", name: "Appearance",   glyph: "appearance", c1: "#636366", c2: "#1C1C1E",
               keys: "theme dark light mode accent color glass liquid apple style translucency blur corner radius font" },
-            { id: "behavior",   name: "Dock Behavior", glyph: "behavior",  c1: "#4CD964", c2: "#26A844",
-              keys: "hide auto labels tooltip indicators bounce animate trash display monitor delay window preview thumbnail" },
-            { id: "apps",       name: "Applications", glyph: "apps",       c1: "#FFB340", c2: "#FF9500",
-              keys: "pinned apps keep remove reset" },
             { id: "widgets",    name: "Widgets",      glyph: "widgets",    c1: "#FF6482", c2: "#FF375F",
               keys: "desktop widget weather clock calendar player music artwork album glass edit add remove" },
             { id: "reminders",  name: "Reminders",    glyph: "reminders",  c1: "#FFB340", c2: "#FF7A00",
@@ -591,7 +589,7 @@ Scope {
             cur = p;
         }
         onCurChanged: flick.contentY = 0
-        onVisibleChanged: { if (!visible && root.hub && root.hub.widgets) root.hub.widgets.editing = false; }   // closing Settings ends widget editing
+        onVisibleChanged: if (!visible) root.teardownEditing()   // closing Settings (any way) saves + ends widget editing
 
         Shortcut { sequences: ["Escape", "Ctrl+W"]; onActivated: prefsWindow.visible = false }
 
@@ -905,6 +903,7 @@ Scope {
             // ───────── scrolling content ─────────
             Flickable {
                 id: flick
+                Component.onCompleted: root.prefsFlick = flick
                 x: sidebar.width + 1
                 y: 52
                 width: parent.width - sidebar.width - 2
@@ -915,12 +914,34 @@ Scope {
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
 
+                // Qt's built-in wheel handling advances the pane by only ~60 px per wheel
+                // notch (and since Qt 6.6 this native path is sluggish even for touchpads).
+                // Our own handler scrolls 2× on a mouse wheel (1080-style) and stays 1:1-ish
+                // on touchpads, which report a fine-grained pixelDelta instead. Wheel events
+                // inside the panes (the avatar crop zoom) are consumed by that MouseArea
+                // first, so they never reach here.
+                // acceptedDevices MUST include TouchPad: WheelHandler defaults to
+                // PointerDevice.Mouse only, so touchpad wheel events are rejected by the
+                // handler and fall through to Flickable's sluggish native scrolling —
+                // which is exactly what made scrolling feel slow here.
+                WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: (event) => {
+                        var max = Math.max(0, flick.contentHeight - flick.height);
+                        var d = event.pixelDelta.y !== 0
+                            ? event.pixelDelta.y * 1.6          // touchpad / trackpad smooth scroll
+                            : event.angleDelta.y * 2.0;          // mouse wheel notch = 120
+                        flick.contentY = Math.max(0, Math.min(max, flick.contentY - d));
+                        event.accepted = true;
+                    }
+                }
+
                 Loader {
                     id: paneLoader
                     x: 22
                     y: 6
                     width: flick.width - 44
-                    sourceComponent: [paneGeneral, paneProfile, paneDock, paneMenuBar, paneAppearance, paneBehavior, paneApps, paneWidgets, paneReminders, paneAbout][prefsWindow.cur]
+                    sourceComponent: [paneGeneral, paneProfile, paneDock, paneMenuBar, paneAppearance, paneWidgets, paneReminders, paneAbout][prefsWindow.cur]
                     onLoaded: fadeIn.restart()
                 }
             }
@@ -994,16 +1015,24 @@ Scope {
 
                 readonly property int vsize: 204        // crop circle diameter on screen
                 readonly property int outSize: 512      // saved avatar resolution
+                // the "current avatar" preview mirrors the lock screen 1:1 — same size math as
+                // LockScreen.qml's 84 * u, so what you see here is what the lock screen shows
+                readonly property int avatarPx: Math.round(84 * Math.max(0.6,
+                    (prefsWindow.screen ? prefsWindow.screen.height : 1200) / 1200))
                 // scale used only on the off-screen save stage (native-res 512² copy)
                 readonly property real saveScale: pane.imgW > 0
                     ? Math.max(pane.outSize / pane.imgW, pane.outSize / pane.imgH) : 1
 
-                // ── built-in library browser (replaces the portal file dialog) ──
-                property bool browsing: false
-                // single dedicated folder, like ~/Pictures/Wallpapers is for wallpapers:
-                // drop (or copy) candidate avatar pictures here and the picker serves
-                // from this directory only.
-                readonly property string libraryDir: home + "/Pictures/Profiles"
+                // ── avatar picker: the regular OS file chooser ──
+                // Opens the freedesktop portal FileChooser (xdg-desktop-portal-gtk —
+                // the same chooser normal apps show). Starts in ~/Pictures and only
+                // offers static images — no GIFs — but the portal may still allow the
+                // user to force something else through, so setPicked screens for that.
+                // The round trip is one embedded python script: subscribe to the
+                // portal's Request::Response signal (sender-agnostic — on this setup
+                // gdbus monitor never sees these responses), make the OpenFile call,
+                // then read the chosen uri out of the signal that answers it.
+                property bool picking: false       // chooser is in flight
 
                 // ── aspect probe: this quickshell build doesn't expose
                 // Image.naturalWidth to QML (reads come back undefined), so load one
@@ -1050,9 +1079,61 @@ Scope {
                         baseScale = Math.max(pane.vsize / pane.imgW, pane.vsize / pane.imgH);
                 }
                 function setPicked(url) {
+                    // GIFs slip past the chooser filter with "All Files" — screen them here
+                    if (/\.(gif|apng)$/i.test(url.split("?")[0])) {
+                        statusText = "GIFs aren't supported — pick a static picture.";
+                        return;
+                    }
                     pickedSource = url;
                     zoom = 1; panX = 0; panY = 0; baseScale = 0;
                     statusText = "";
+                }
+
+                // ── the OS file chooser ──
+                function openPicker() {
+                    if (pane.picking) return;
+                    pane.picking = true;
+                    pane.statusText = "";
+                    pickerCall.running = true;
+                }
+
+                Process {
+                    id: pickerCall
+                    // subscribe BEFORE the call (the Response then cannot be missed),
+                    // make the OpenFile call, wait for the signal, print the verdict.
+                    // Everything is a native typed GLib.Variant — no text GVariant to
+                    // get wrong. The sender is deliberately NOT filtered: whichever
+                    // connection emits the response (the daemon's or the backend's),
+                    // the request path is keyed by a unique per-pick token and that
+                    // is what we check — the sender-keyed match rule behind gdbus
+                    // monitor never received a single Response in all our tests.
+                    command: ["python3", "-c", pane.pickPy]
+                    stdout: StdioCollector { id: pickOut }
+                    onExited: {
+                        pane.picking = false;
+                        var lines = pickOut.text.split("\n");
+                        for (var i = 0; i < lines.length; ++i) {
+                            var line = lines[i];
+                            if (line.indexOf("CALLFAIL:") === 0) {
+                                pane.statusText = "Couldn't open the file chooser — is xdg-desktop-portal-gtk running?";
+                                return;
+                            }
+                            if (line.indexOf("URI=") === 0) {
+                                pane.setPicked(line.substring(4).trim());
+                                // a new crop card just appeared at the bottom of the
+                                // pane — after the Column relayouts, bring it into view
+                                revealTimer.restart();
+                                return;
+                            }
+                        }
+                        // CANCELLED / NORESP — quietly done
+                    }
+                }
+
+                Timer {
+                    id: revealTimer
+                    interval: 60
+                    onTriggered: root.prefsFlick.contentY = Math.max(0, root.prefsFlick.contentHeight - root.prefsFlick.height)
                 }
                 function saveAvatar() {
                     if (pickedSource === "" || pane.imgW <= 0) return;
@@ -1091,6 +1172,68 @@ Scope {
 
                 // native-res circular avatar generator (Pillow): crops the framed
                 // native square, resizes to 512², and punches a circular alpha mask.
+                // full avatar-picking round trip: subscribe to the portal's
+                // Request::Response (no sender filter — token-in-path is the key),
+                // open the chooser via OpenFile, and print the verdict on stdout:
+                // "URI=file://…" / "CANCELLED" / "NORESP" / "CALLFAIL: …"
+                readonly property string pickPy:
+                    "import os, sys\n"
+                  + "from gi.repository import GLib, Gio\n"
+                  + "bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)\n"
+                  + "token = 'macshellavatar' + str(GLib.get_monotonic_time() % 100000000)\n"
+                  + "mainloop = GLib.MainLoop()\n"
+                  + "state = {}\n"
+                  + "def on_response(conn, sender, path, iface, signame, params):\n"
+                  + "    if token not in path:      # some other app's pick — ignore quietly\n"
+                  + "        return\n"
+                  + "    resp, results = params.unpack()\n"
+                  + "    state['code'] = resp\n"
+                  + "    state['uris'] = (results or {}).get('uris') if isinstance(results, dict) else []\n"
+                  + "    mainloop.quit()\n"
+                  + "# subscribe BEFORE the call so the response cannot race past us\n"
+                  + "sid = bus.signal_subscribe(sender=None, interface_name='org.freedesktop.portal.Request',\n"
+                  + "    member='Response', object_path=None, arg0=None,\n"
+                  + "    flags=Gio.DBusSignalFlags.NONE, callback=on_response)\n"
+                  + "start = os.environ.get('HOME') + '/Pictures'\n"
+                  + "cur = list(start.encode('utf-8', 'surrogateescape')) + [0]\n"
+                  + "options = GLib.Variant('a{sv}', {\n"
+                  + "    'handle_token': GLib.Variant('s', token),\n"
+                  + "    'accept_label': GLib.Variant('s', 'Choose'),\n"
+                  + "    'multiple': GLib.Variant('b', False),\n"
+                  + "    'current_folder': GLib.Variant('ay', bytes(cur)),\n"
+                  + "    'filters': GLib.Variant('a(sa(us))', [('Static images', [\n"
+                  + "        (0, '*.png'), (0, '*.jpg'), (0, '*.jpeg'),\n"
+                  + "        (0, '*.webp'), (0, '*.bmp'), (0, '*.avif')])]),\n"
+                  + "})\n"
+                  + "try:\n"
+                  + "    bus.call_sync('org.freedesktop.portal.Desktop',\n"
+                  + "        '/org/freedesktop/portal/desktop',\n"
+                  + "        'org.freedesktop.portal.FileChooser', 'OpenFile',\n"
+                  + "        GLib.Variant.new_tuple(\n"
+                  + "            GLib.Variant('s', ''),\n"
+                  + "            GLib.Variant('s', 'Choose an avatar picture'),\n"
+                  + "            options),\n"
+                  + "        GLib.VariantType.new('(o)'),\n"
+                  + "        Gio.DBusCallFlags.NONE, -1, None)\n"
+                  + "    print('CALLOK', flush=True)\n"
+                  + "except GLib.Error as e:\n"
+                  + "    print('CALLFAIL: ' + e.message, flush=True)\n"
+                  + "    sys.exit(0)\n"
+                  + "def on_timeout():\n"
+                  + "    mainloop.quit()\n"
+                  + "    return GLib.SOURCE_REMOVE\n"
+                  + "GLib.timeout_add_seconds(300, on_timeout)\n"
+                  + "mainloop.run()\n"
+                  + "bus.signal_unsubscribe(sid)\n"
+                  + "code = state.get('code', -1)\n"
+                  + "if code == -1:\n"
+                  + "    print('NORESP', flush=True)\n"
+                  + "elif code == 0:\n"
+                  + "    for u in (state.get('uris') or []):\n"
+                  + "        print('URI=' + u, flush=True)\n"
+                  + "else:\n"
+                  + "    print('CANCELLED', flush=True)\n"
+
                 readonly property string savePy:
                     "import sys\n"
                   + "from PIL import Image, ImageDraw\n"
@@ -1155,8 +1298,14 @@ Scope {
                         // current avatar preview
                         Item {
                             x: 14
-                            width: 60; height: 60
+                            width: pane.avatarPx; height: pane.avatarPx
                             anchors.verticalCenter: parent.verticalCenter
+                            // clicking the avatar (empty or not) opens the OS file chooser
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: pane.openPicker()
+                            }
                             Rectangle {
                                 id: curBg
                                 anchors.fill: parent; radius: width / 2
@@ -1167,7 +1316,7 @@ Scope {
                                     visible: curImg.status !== Image.Ready
                                     text: pane.userName.charAt(0).toUpperCase()
                                     color: pal.text2
-                                    font.family: pal.fam; font.pixelSize: 24; font.weight: Font.Medium
+                                    font.family: pal.fam; font.pixelSize: Math.round(pane.avatarPx * 0.43); font.weight: Font.Medium
                                 }
                                 Image {
                                     id: curImg
@@ -1196,7 +1345,7 @@ Scope {
                             }
                         }
                         Column {
-                            x: 86
+                            x: pane.avatarPx + 26
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 7
                             Row {
@@ -1228,8 +1377,8 @@ Scope {
                             spacing: 8
                             SButton {
                                 t: pal
-                                text: pane.browsing ? "Close Library" : "Choose Image…"
-                                onClicked: pane.browsing = !pane.browsing
+                                text: "Choose Image…"
+                                onClicked: pane.openPicker()
                             }
                             SButton {
                                 t: pal
@@ -1354,109 +1503,6 @@ Scope {
                     t: pal
                     text: "The picture shows above your name on the lock screen. Saved to ~/.face and mirrored to " +
                           "~/.face.icon / AccountsService when possible. Static images only — GIFs aren't supported."
-                }
-
-                // ── Library: browse pictures inside this window — no portal, no file manager.
-                // FolderListModel gives us fileName / filePath (url) / fileIsDir per entry.
-                FolderListModel {
-                    id: libraryModel
-                    folder: "file://" + pane.libraryDir
-                    nameFilters: ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.avif"]
-                    showDirs: false
-                    showDotAndDotDot: false
-                    caseSensitive: false
-                }
-
-                SCard {
-                    t: pal
-                    visible: pane.browsing
-                    Item {
-                        width: parent.width
-                        height: 348
-
-                        Column {
-                            x: 14; y: 12
-                            width: parent.width - 28
-                            spacing: 4
-                            Text {
-                                text: "Library — " + pane.libraryDir.replace(pane.home, "~")
-                                color: pal.text
-                                font.family: pal.fam; font.pixelSize: 13; font.weight: Font.DemiBold
-                            }
-                            Text {
-                                text: "Drop (or copy) the pictures you want to use into this folder — they show up here instantly."
-                                color: pal.text2
-                                font.family: pal.fam; font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                                width: parent.width
-                            }
-                        }
-
-                        GridView {
-                            id: grid
-                            x: 14; y: 74
-                            width: parent.width - 28
-                            height: parent.height - 74 - 24
-                            clip: true
-                            cellWidth: 84
-                            cellHeight: 84
-                            model: libraryModel
-                            boundsBehavior: Flickable.StopAtBounds
-
-                            delegate: Item {
-                                width: grid.cellWidth; height: grid.cellHeight
-                                required property url filePath
-                                required property string fileName
-
-                                Column {
-                                    anchors.centerIn: parent
-                                    spacing: 5
-
-                                    Item {
-                                        width: 62; height: 60
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        // image thumbnail
-                                        Image {
-                                            anchors.centerIn: parent
-                                            width: 60; height: 60
-                                            source: filePath
-                                            fillMode: Image.PreserveAspectCrop
-                                            smooth: true; mipmap: true
-                                            asynchronous: true
-                                            sourceSize.width: 128
-                                            sourceSize.height: 128
-                                            cache: false
-                                        }
-                                    }
-                                    Text {
-                                        text: fileName
-                                        color: pal.text
-                                        font.family: pal.fam; font.pixelSize: 11
-                                        elide: Text.ElideMiddle
-                                        width: 78
-                                    }
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.OpenHandCursor
-                                    onClicked: {
-                                        pane.setPicked(filePath.toString());
-                                        pane.browsing = false;
-                                    }
-                                }
-                            }
-                        }
-                        // friendly empty state — the folder ships empty
-                        Text {
-                            visible: grid.count === 0
-                            anchors.centerIn: parent
-                            text: "Nothing here yet —\ndrop images into " + pane.libraryDir.replace(pane.home, "~")
-                            color: pal.text2
-                            font.family: pal.fam; font.pixelSize: 12
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-                    }
                 }
             }
         }
@@ -1704,6 +1750,33 @@ Scope {
                     }
                 }
 
+                SLabel { t: pal; header: true; text: "Hidden Apps" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        visible: !root.bar || !root.bar.spHiddenApps || root.bar.spHiddenApps.length === 0
+                        title: "No apps hidden"
+                        subtitle: "Right-click an app in Spotlight and choose \u201CHide App\u201D."
+                    }
+                    Repeater {
+                        model: root.bar && root.bar.spHiddenApps ? root.bar.spHiddenApps : []
+                        delegate: SRow {
+                            id: hiddenRow
+                            required property var modelData
+                            t: pal
+                            readonly property var entry: root.bar ? root.bar.spEntryById(hiddenRow.modelData) : null
+                            title: entry && entry.name ? entry.name : String(hiddenRow.modelData)
+                            iconSource: entry && entry.icon ? root.iconSrc(entry.icon) : ""
+                            SButton {
+                                t: pal
+                                text: "Show again"
+                                onClicked: if (root.bar) root.bar.spotRestore(hiddenRow.modelData);
+                            }
+                        }
+                    }
+                }
+
                 SCard {
                     t: pal
                     SRow {
@@ -1836,11 +1909,28 @@ Scope {
             }
         }
 
-        // ── Dock ──
+        // ── Dock (size & style, behavior, applications — one pane, like macOS) ──
         Component {
             id: paneDock
             Column {
+                id: dockCol
                 spacing: 10
+
+                readonly property int pinCount: root.items.filter(function (i) {
+                    return i.kind === "app" && i.pinned && !i.special;
+                }).length
+
+                // master switch (mirrored from General → Shell so this pane is
+                // self-contained; General keeps its own copy for the quick toggles)
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show the Dock"
+                        subtitle: "Show the Dock at the bottom of the screen"
+                        SSwitch { t: pal; checked: root.dockEnabled; onToggled: v => root.dockEnabled = v }
+                    }
+                }
 
                 // live preview
                 Rectangle {
@@ -1970,6 +2060,133 @@ Scope {
                         }
                     }
                 }
+                // ── Behavior ──
+                SLabel { t: pal; header: true; text: "Behavior" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Automatically hide and show the Dock"
+                        subtitle: root.hideMode === "smart" ? "Hides only while a tiled window needs the space"
+                                : (root.hideMode === "always" ? "Always hidden until the pointer touches the screen edge"
+                                                              : "Always visible and reserves screen space")
+                        SSegmented {
+                            t: pal
+                            model: ["Smart", "Always", "Never"]
+                            segWidth: 64
+                            current: root.hideMode === "smart" ? 0 : (root.hideMode === "always" ? 1 : 2)
+                            onPicked: i => root.hideMode = ["smart", "always", "never"][i]
+                        }
+                    }
+                    SRow {
+                        t: pal
+                        visible: root.hideMode !== "never"
+                        title: "Hide delay"
+                        SSlider {
+                            t: pal
+                            from: 0; to: 1500; stepSize: 50
+                            value: root.hideDelay
+                            leftLabel: "Instant"; rightLabel: "1.5 s"
+                            onMoved: v => root.hideDelay = Math.round(v)
+                        }
+                    }
+                }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show Dock on"
+                        SSegmented {
+                            t: pal
+                            model: ["All Displays", "Primary Only"]
+                            segWidth: 96
+                            current: root.monitor === "" ? 0 : 1
+                            onPicked: i => {
+                                if (i === 0) root.monitor = "";
+                                else if (Quickshell.screens.length > 0) root.monitor = Quickshell.screens[0].name;
+                            }
+                        }
+                    }
+                }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Show labels"
+                        subtitle: "Display an app's name when you hover its icon"
+                        SSwitch { t: pal; checked: root.showLabels; onToggled: v => root.showLabels = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show window previews"
+                        subtitle: "Open windows appear as live previews next to the Trash, each with its app's icon"
+                        SSwitch { t: pal; checked: root.showThumbs; onToggled: v => root.showThumbs = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Live window capture"
+                        subtitle: "Capture open windows for the previews. Turn off and the previews show the app icon instead (Liquid Glass is not affected)"
+                        SSwitch { t: pal; checked: root.windowCapture; onToggled: v => root.windowCapture = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show indicators for open applications"
+                        SSwitch { t: pal; checked: root.showIndicators; onToggled: v => root.showIndicators = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Animate opening applications"
+                        subtitle: "Icons bounce while an app is launching"
+                        SSwitch { t: pal; checked: root.bounceOnLaunch; onToggled: v => root.bounceOnLaunch = v }
+                    }
+                    SRow {
+                        t: pal
+                        title: "Show Trash in the Dock"
+                        SSwitch { t: pal; checked: root.showTrash; onToggled: v => root.showTrash = v }
+                    }
+                }
+
+                // ── Applications (kept in Dock) ──
+                SLabel { t: pal; header: true; text: "Applications" }
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        visible: dockCol.pinCount === 0
+                        title: "No apps are kept in the Dock"
+                        subtitle: "Right-click a running app and choose Keep in Dock."
+                    }
+                    Repeater {
+                        model: root.items
+                        delegate: SRow {
+                            id: appRow
+                            required property var modelData
+                            t: pal
+                            visible: modelData.kind === "app" && modelData.pinned === true && !modelData.special
+                            title: modelData.name || ""
+                            iconSource: modelData.icon ? root.iconSrc(modelData.icon) : ""
+                            SButton {
+                                t: pal
+                                text: "Remove"
+                                onClicked: root.togglePin(appRow.modelData)
+                            }
+                        }
+                    }
+                }
+                SLabel { t: pal; text: "Drag icons in the Dock to reorder them. Pins are saved to ~/.config/macdock/pinned.json." }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Reset Dock Items"
+                        subtitle: "Go back to the default set of apps"
+                        SButton { t: pal; text: "Reset"; onClicked: root.resetPins() }
+                    }
+                }
+
                 SLabel { t: pal; text: "Changes apply to the Dock immediately." }
             }
         }
@@ -2137,150 +2354,6 @@ Scope {
             }
         }
 
-        // ── Behavior ──
-        Component {
-            id: paneBehavior
-            Column {
-                spacing: 10
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Automatically hide and show the Dock"
-                        subtitle: root.hideMode === "smart" ? "Hides only while a tiled window needs the space"
-                                : (root.hideMode === "always" ? "Always hidden until the pointer touches the screen edge"
-                                                              : "Always visible and reserves screen space")
-                        SSegmented {
-                            t: pal
-                            model: ["Smart", "Always", "Never"]
-                            segWidth: 64
-                            current: root.hideMode === "smart" ? 0 : (root.hideMode === "always" ? 1 : 2)
-                            onPicked: i => root.hideMode = ["smart", "always", "never"][i]
-                        }
-                    }
-                    SRow {
-                        t: pal
-                        visible: root.hideMode !== "never"
-                        title: "Hide delay"
-                        SSlider {
-                            t: pal
-                            from: 0; to: 1500; stepSize: 50
-                            value: root.hideDelay
-                            leftLabel: "Instant"; rightLabel: "1.5 s"
-                            onMoved: v => root.hideDelay = Math.round(v)
-                        }
-                    }
-                }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Show Dock on"
-                        SSegmented {
-                            t: pal
-                            model: ["All Displays", "Primary Only"]
-                            segWidth: 96
-                            current: root.monitor === "" ? 0 : 1
-                            onPicked: i => {
-                                if (i === 0) root.monitor = "";
-                                else if (Quickshell.screens.length > 0) root.monitor = Quickshell.screens[0].name;
-                            }
-                        }
-                    }
-                }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Show labels"
-                        subtitle: "Display an app's name when you hover its icon"
-                        SSwitch { t: pal; checked: root.showLabels; onToggled: v => root.showLabels = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show window previews"
-                        subtitle: "Open windows appear as live previews next to the Trash, each with its app's icon"
-                        SSwitch { t: pal; checked: root.showThumbs; onToggled: v => root.showThumbs = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Live window capture"
-                        subtitle: "Capture open windows for the previews. Turn off and the previews show the app icon instead (Liquid Glass is not affected)"
-                        SSwitch { t: pal; checked: root.windowCapture; onToggled: v => root.windowCapture = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show indicators for open applications"
-                        SSwitch { t: pal; checked: root.showIndicators; onToggled: v => root.showIndicators = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Animate opening applications"
-                        subtitle: "Icons bounce while an app is launching"
-                        SSwitch { t: pal; checked: root.bounceOnLaunch; onToggled: v => root.bounceOnLaunch = v }
-                    }
-                    SRow {
-                        t: pal
-                        title: "Show Trash in the Dock"
-                        SSwitch { t: pal; checked: root.showTrash; onToggled: v => root.showTrash = v }
-                    }
-                }
-            }
-        }
-
-        // ── Applications ──
-        Component {
-            id: paneApps
-            Column {
-                id: appsCol
-                spacing: 10
-                readonly property int pinCount: root.items.filter(function (i) {
-                    return i.kind === "app" && i.pinned && !i.special;
-                }).length
-
-                SLabel { t: pal; header: true; text: "Kept in Dock" }
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        visible: appsCol.pinCount === 0
-                        title: "No apps are kept in the Dock"
-                        subtitle: "Right-click a running app and choose Keep in Dock."
-                    }
-                    Repeater {
-                        model: root.items
-                        delegate: SRow {
-                            id: appRow
-                            required property var modelData
-                            t: pal
-                            visible: modelData.kind === "app" && modelData.pinned === true && !modelData.special
-                            title: modelData.name || ""
-                            iconSource: modelData.icon ? root.iconSrc(modelData.icon) : ""
-                            SButton {
-                                t: pal
-                                text: "Remove"
-                                onClicked: root.togglePin(appRow.modelData)
-                            }
-                        }
-                    }
-                }
-                SLabel { t: pal; text: "Drag icons in the Dock to reorder them. Pins are saved to ~/.config/macdock/pinned.json." }
-
-                SCard {
-                    t: pal
-                    SRow {
-                        t: pal
-                        title: "Reset Dock Items"
-                        subtitle: "Go back to the default set of apps"
-                        SButton { t: pal; text: "Reset"; onClicked: root.resetPins() }
-                    }
-                }
-            }
-        }
-
         // ── Widgets ──
         Component {
             id: paneWidgets
@@ -2300,7 +2373,18 @@ Scope {
                         SButton {
                             t: pal
                             text: wp.editing ? "Stop Editing" : "Edit Desktop Widgets"
-                            onClicked: if (wp.wd) wp.wd.editing = !wp.wd.editing
+                            onClicked: {
+                                if (!wp.wd) return;
+                                var on = !wp.wd.editing;
+                                wp.wd.editing = on;
+                                if (on) {
+                                    // The widgets layer sits under every workspace, but the Settings
+                                    // pane covers the desktop here. Jump to the next workspace so the
+                                    // widgets are visible and clickable right away; "Stop Editing"
+                                    // (or closing the pane) ends edit mode wherever you are.
+                                    Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "+1" })']);
+                                }
+                            }
                         }
                     }
                 }
@@ -3287,6 +3371,18 @@ Scope {
         prefsWindow.requestActivate();
     }
 
+    // Whenever the Settings pane goes away (Ctrl+W / traffic light / SUPER+W / any close),
+    // widget editing must end cleanly: flush any debounced save first so a drag that
+    // finished < 400 ms ago can never be lost, then leave edit mode. Doing it here also
+    // covers the case where the shell tears the window down abruptly.
+    function teardownEditing() {
+        var w = root.hub && root.hub.widgets ? root.hub.widgets : null;
+        if (!w) return;
+        if (w.editing) w.flushSave();   // save now, while the process is guaranteed alive
+        w.editing = false;
+        w.flushSave();                  // and once more after leaving edit mode
+    }
+
     function resetPins() {
         pinned = defaultPinned;
         store.setText(JSON.stringify(defaultPinned.slice(), null, 2));
@@ -3378,18 +3474,41 @@ Scope {
     }
     Timer { id: youngWin; interval: 250; onTriggered: root.rebuild() }
 
+    // Qt's SVG engine only speaks SVG Tiny 1.2 — it cannot draw the mask/
+    // filter/clipPath-heavy Adwaita trash SVGs (they come out as a black and
+    // dark-pink quadrant box). The real thing is therefore pre-rendered to
+    // PNGs, shipped in assets/, and served whenever the trash icon is wanted.
+    function assetUrl(name) {
+        return Qt.resolvedUrl("assets/" + name);
+    }
+
     function iconSrc(icon) {
+        if (iconOverrides[icon]) return assetUrl(iconOverrides[icon]);
         if (!icon) return Quickshell.iconPath("application-x-executable");
         if (icon.charAt(0) === "/") return "file://" + icon;
         return Quickshell.iconPath(icon, "application-x-executable");
     }
+    // icon overrides for apps the theme can't resolve but we have lovely hand-made art for
+    readonly property var iconOverrides: ({
+        "org.quickshell": "settings.png",       // this shell's own Settings window (macOS gear)
+        "user-trash": "user-trash.png",         // Adwaita's SVG trash can't be drawn by Qt's SVG engine
+        "user-trash-full": "user-trash-full.png"
+    })
+    // strict lookup: "" when the theme has no such icon, so the dock can draw its own
+    // placeholder tile instead of every nameless app showing the same generic box.
+    // (`true` as the fallback argument means "no fallback": Quickshell returns "" for
+    //  names the theme doesn't have, unlike a string fallback which always returns a URL.)
+    function iconResolve(icon) {
+        if (!icon) return "";
+        if (iconOverrides[icon]) return assetUrl(iconOverrides[icon]);
+        if (icon.charAt(0) === "/") return "file://" + icon;
+        return Quickshell.iconPath(icon, true);
+    }
     // icon of a dock cell; the Trash switches to the "full" icon while there is something in it
     function cellIconSrc(it) {
-        if (it && it.special === "trash" && trashFull) {
-            var p = Quickshell.iconPath("user-trash-full", true);
-            if (p !== "") return p;
-        }
-        return iconSrc(it ? it.icon : "");
+        if (it && it.special === "trash" && trashFull)
+            return assetUrl("user-trash-full.png");
+        return iconResolve(it ? it.icon : "");
     }
 
     // ── Trash state: the standard XDG trash (~/.local/share/Trash/files) is what Dolphin's trash:/ shows ──
@@ -4251,6 +4370,43 @@ Scope {
                                     brightness: ma.pressed ? -0.3 : 0.0
                                 }
 
+                                // ── drawn placeholder for apps whose icon is not in the theme ──
+                                // (instead of the generic "executable box" every nameless app used
+                                //  to show: a warm macOS-ish tile with the app's initial, so helpers
+                                //  like the polkit password prompt still look at home in the Dock)
+                                Rectangle {
+                                    // soft drop shadow, drawn under the tile (a MultiEffect can't be used
+                                    // here: capturing the tile into a texture drops its child Text)
+                                    visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
+                                    width: iconFallback.width + 4; height: width
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: img.lift - 4
+                                    radius: width * 0.22
+                                    color: Qt.rgba(0, 0, 0, 0.22)
+                                }
+                                Rectangle {
+                                    id: iconFallback
+                                    // (source is a url object, so compare its string form with "" — a plain === "" never matches)
+                                    visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
+                                    width: img.width; height: width
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: img.lift
+                                    radius: width * 0.22
+                                    gradient: Gradient {
+                                        GradientStop { position: 0; color: root.darkMode ? "#8E8E93" : "#AEAEB2" }
+                                        GradientStop { position: 1; color: root.darkMode ? "#48484A" : "#7C7C80" }
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: cell.modelData && cell.modelData.name ? String(cell.modelData.name).trim().charAt(0).toUpperCase() : "?"
+                                        color: "#FFFFFF"
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Math.round(iconFallback.width * 0.46)
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
                                 // ── window thumbnail (same box as the icon, so magnification just works) ──
                                 Item {
                                     id: th
