@@ -104,7 +104,8 @@ Scope {
     property real glassLiquid: 1.0
     property real glassBlur: 5
     property real barBgOpacity: 0.10          // fill of the separate "macbarbg" layer (0 = layer hidden). Must stay above the layerrule's ignore_alpha (0.05) for Hyprland to blur it
-    property bool glassRealtime: true       // keep every window capture live all the time (no wallpaper-first delay when a popover opens)
+    property bool glassRealtime: false      // false = smart mode: window captures go live only while glass is on screen (or the window sits behind it);
+                                            // true = every capture stays live all the time (old behaviour, costs GPU/CPU/RAM around the clock)
     property bool glassDebug: false
     property string wallpaperPath: ""
     property bool use24h: false
@@ -1788,16 +1789,6 @@ Scope {
     }
     function setBrightness(v) { osdQuiet("brightness", 1800); brightness = Math.max(0.01, Math.min(1, v)); brightApply.restart(); }
     onBrightnessChanged: showOsd("brightness", brightness)
-    // Poll is only a safety net for changes made outside the shell (rare): fn keys
-    // announce themselves via the brightnessosd IPC handler, and the control-center
-    // slider drives the value itself. Slow 5s baseline, fast only while the Display
-    // tile is on screen; was a `brightnessctl -m` spawn every 850ms, forever.
-    Timer {
-        interval: ui.pop === "cc" ? 850 : 5000
-        repeat: true
-        running: true
-        onTriggered: root.refreshBrightness()
-    }
     // ═════════════ KEYBOARD LAYOUT ═════════════
     // Hyprland announces every change with an `activelayout` event, so the label updates immediately (no polling).
     // `hyprctl devices` is only read at start-up and after a config reload, to learn which layouts are configured.
@@ -3035,7 +3026,7 @@ Scope {
     }
     function resetSettings() {
         barEnabled = true;
-        darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = true;
+        darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = false;
         barStyle = "liquid"; use24h = false; showDate = true; showSeconds = false; showBatteryPercent = true;
         powerMode = "balanced";
         showTray = true; showSearch = true;
@@ -3905,6 +3896,11 @@ Scope {
                 property var trayItem: null         // SystemTrayItem whose menu is open in the tray popover
                 property var trayStack: []          // submenu path (QsMenuEntry objects) inside that menu
                 Timer { interval: 400; repeat: true; running: ui.pop === "vol"; onTriggered: root.audioTick++ }
+                // brightness poll: safety net for changes made outside the shell (rare) - fn keys
+                // announce themselves via the brightnessosd IPC handler and the control-center
+                // slider drives the value itself. Slow 5s baseline, fast while the Display tile
+                // is on screen; was a `brightnessctl -m` spawn every 850ms, forever.
+                Timer { interval: ui.pop === "cc" ? 850 : 5000; repeat: true; running: true; onTriggered: root.refreshBrightness() }
                 readonly property bool toastScreen: Quickshell.screens.length === 1 || (Hyprland.focusedMonitor !== null && Hyprland.focusedMonitor.name === win.modelData.name)
                 readonly property bool toastsShown: toastScreen && notifToasts.count > 0
 
@@ -4209,13 +4205,15 @@ Scope {
                                         function onCaptureQuietChanged() { hushT.interval = 20 + Math.random() * 600; hushT.restart(); }
                                     }
                                     Timer { id: hushT; onTriggered: sv.hush = root.captureQuiet }
-                                    // REAL-TIME: with glassRealtime every capture stays live all the time, so a popover opens on
+                                    // REAL-TIME vs SMART: with glassRealtime every capture stays live all the time, so a popover opens on
                                     // frames that are already current and nothing is torn down / restarted when it opens (the restart
-                                    // is what used to show the bare wallpaper first). Backdrops that live in a window which is
-                                    // hidden right now (Spotlight, switcher, ...) are only kept warm with slow single captures.
+                                    // is what used to show the bare wallpaper first). In the default smart mode, captures go live only
+                                    // while some glass is actually on screen (or the window sits behind the glass region), and the
+                                    // 250 ms single-capture keep-warm below keeps every backdrop current otherwise, so opening a
+                                    // popover still shows ready-made pixels instead of the bare wallpaper.
                                     // While recording only the windows behind visible glass stay live (so the glass is real-time exactly where you see it,
                                     // e.g. a video behind the Control Center), every other window sits out.
-                                    live: !gw.gone && !root.captureHeld && bd.hostShown && (!sv.hush || gw.onGlass) && (root.glassRealtime || ui.anyVisible || levelOsd.visible || spotWin.visible || swWin.visible || wpWin.visible)
+                                    live: !gw.gone && !root.captureHeld && bd.hostShown && (!sv.hush || gw.onGlass) && (root.glassRealtime || gw.onGlass || ui.anyVisible || levelOsd.visible || spotWin.visible || swWin.visible || wpWin.visible)
                                     onCaptureSourceChanged: {
                                         // a brand-new capture grabs its first frame immediately instead of waiting for the timer
                                         // (a short delay: asking before the capture context exists only logged "no recording context is ready")
