@@ -3239,27 +3239,54 @@ Scope {
                     Item {
                         width: parent.width
                         height: 176
-                        SGlyph {
+                        Item {
+                            id: aboutAvatar
                             x: (parent.width - width) / 2
-                            y: 44
-                            kind: "dock"
-                            scale: 3.4
+                            y: 22
+                            width: 72
+                            height: 72
+
+                            Image {
+                                id: aboutAvatarImg
+                                anchors.fill: parent
+                                source: "file:///home/sur/Pictures/Icons/mike.png"
+                                sourceSize.width: 144
+                                sourceSize.height: 144
+                                fillMode: Image.PreserveAspectCrop
+                                smooth: true
+                                layer.enabled: true
+                                visible: false
+                            }
+                            MultiEffect {
+                                anchors.fill: parent
+                                source: aboutAvatarImg
+                                maskEnabled: true
+                                maskSource: aboutAvatarMask
+                            }
+                            Rectangle {
+                                id: aboutAvatarMask
+                                width: aboutAvatar.width
+                                height: aboutAvatar.height
+                                radius: width / 2
+                                layer.enabled: true
+                                visible: false
+                            }
                         }
                         Text {
-                            y: 108
+                            y: 102
                             width: parent.width
                             horizontalAlignment: Text.AlignHCenter
-                            text: "macshell"
+                            text: "Sur"
                             color: pal.text
                             font.family: pal.fam
                             font.pixelSize: 21
                             font.weight: Font.DemiBold
                         }
                         Text {
-                            y: 138
+                            y: 132
                             width: parent.width
                             horizontalAlignment: Text.AlignHCenter
-                            text: "Version 2 \u2022 Hyprland \u2022 Quickshell"
+                            text: "Fontaines \u2022 Hyprland \u2022 Quickshell"
                             color: pal.text2
                             font.family: pal.fam
                             font.pixelSize: 12
@@ -3316,7 +3343,7 @@ Scope {
                         Text {
                             x: 14
                             y: 12
-                            text: "Made by Rickky"
+                            text: "Compiled by"
                             color: pal.text
                             font.family: pal.fam
                             font.pixelSize: 13
@@ -3326,7 +3353,7 @@ Scope {
                             id: ghLink
                             x: 14
                             y: 33
-                            text: "https://github.com/0-ss"
+                            text: "https://github.com/luvhendrixx"
                             color: pal.accent
                             font.family: pal.fam
                             font.pixelSize: 12
@@ -3336,7 +3363,7 @@ Scope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/0-ss"])
+                                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/luvhendrixx"])
                             }
                         }
                     }
