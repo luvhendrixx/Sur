@@ -8031,12 +8031,11 @@ Scope {
                     }
                     Timer { id: lumDebounce; interval: 500; onTriggered: lumHub.sampleNow() }
                     Timer { interval: 1500; running: true; onTriggered: lumHub.sampleNow() }                       // once after start-up
-                    Timer { interval: 6000; repeat: true; running: spot.adaptive && !spotWin.visible; onTriggered: lumHub.sampleNow() }   // safety poll while hidden
-                    Connections {
-                        target: root
-                        function onGlassClientsChanged() { lumDebounce.restart(); }
-                        function onMonDataChanged() { lumDebounce.restart(); }
-                    }
+                    // slow safety poll only: wallpaper changes don't emit Hyprland events, so the hidden
+                    // pre-measurement needs some poll. Opening Spotlight samples fresh anyway (onPopChanged
+                    // above), and window/workspace changes no longer trigger pre-samples - they fired on
+                    // every 500ms-debounced geometry change (constant grim spawns while dragging windows).
+                    Timer { interval: 30000; repeat: true; running: spot.adaptive && !spotWin.visible; onTriggered: lumHub.sampleNow() }
                     Connections { target: spotWin; function onVisibleChanged() { if (!spotWin.visible) lumDebounce.restart(); } }
                     Timer {
                         interval: lumHub.probeTicks < 25 ? 40 : 300; repeat: true; triggeredOnStart: true
