@@ -13,7 +13,7 @@
 //   Normal Blur         – the original translucent tint; blur comes from the Hyprland layer rule below.
 //   Apple Liquid Glass  – real-time refraction shader (liquidglass.frag, next to this file). It is compiled
 //                         with `qsb` (package qt6-shadertools) on first use and cached in ~/.config/macdock/.
-//                         The backdrop it refracts is the wallpaper + the live windows behind the Dock;
+//                         The backdrop it refracts is the wallpaper + a monitor capture of the windows behind the Dock;
 //                         set "wallpaperPath" in settings.json if the wallpaper isn't auto-detected.
 //
 // Hyprland (Lua) layer rule for the glass:
@@ -39,7 +39,7 @@ Scope {
     property var prefsFlick: null
     readonly property var bar: hub ? hub.bar : null
     readonly property bool captureCut: hub ? hub.captureCut : false
-    readonly property bool glassHold: hub ? hub.glassHold : false          // windows opening / closing: the glass's live captures pause, source stays attached
+    readonly property bool glassHold: hub ? hub.glassHold : false          // windows opening / closing: the glass refresh pauses, last frame stays
     readonly property bool captureHold: hub ? hub.captureHold : false     // windows opening / closing: the dock PREVIEW capture stops (source released 0.5 s later); the glass is not affected
     // appearance values shared by Dock and Menu Bar
     function setLook(k, v) { root[k] = v; if (bar) bar[k] = v; }
@@ -60,7 +60,7 @@ Scope {
     property real glassRim: 0.45
     property real glassGrain: 0.03
     property real glassLiquid: 1.0
-    readonly property bool glassRT: bar ? bar.glassRealtime : true     // real-time glass (Menu Bar settings)
+    readonly property bool glassRT: bar ? bar.glassRealtime : true     // faster backdrop refresh (Menu Bar settings)
     property real glassBlur: 5            // Liquid Glass backdrop blur radius, px (settings slider)
     property bool glassDebug: false       // settings.json only: draw the raw Liquid Glass backdrop texture
     property string wallpaperPath: ""    // optional override for the wallpaper the Liquid Glass refracts
@@ -75,7 +75,7 @@ Scope {
     property bool showIndicators: true   // dots under running apps
     property bool bounceOnLaunch: true
     property bool showThumbs: true       // open windows get a live preview cell next to the Trash
-    property bool windowCapture: true    // live window capture for those previews (off: the cells show the app icon, nothing is captured). Liquid Glass is not affected
+    property bool windowCapture: true    // window thumbnail capture for those previews (off: the cells show the app icon, nothing is captured). Liquid Glass is not affected
     property int hideDelay: 450          // ms before the dock hides after the pointer leaves
     readonly property var accentChoices: [
         { name: "Blue",     c: "#0a84ff" }, { name: "Purple", c: "#bf5af2" },
@@ -522,7 +522,7 @@ Scope {
     // ─────────────────────────── THE WINDOW ───────────────────────────
     Window {
         id: prefsWindow
-        title: "macshell Settings"
+        title: "Sur Settings"
         width: 820
         height: 600
         minimumWidth: 700
@@ -1681,8 +1681,8 @@ Scope {
                     }
                     SRow {
                         t: pal
-                        title: "Real-time glass"
-                        subtitle: "Keep window captures live so popovers, Spotlight and the Dock open on current pixels. Turn off to save GPU."
+                        title: "Faster glass refresh"
+                        subtitle: "Refresh the backdrop more often so popovers, Spotlight and the Dock open on fresher pixels. Turn off to save GPU."
                         SSwitch {
                             t: pal
                             checked: root.bar ? root.bar.glassRealtime : true
@@ -2121,12 +2121,12 @@ Scope {
                     SRow {
                         t: pal
                         title: "Show window previews"
-                        subtitle: "Open windows appear as live previews next to the Trash, each with its app's icon"
+                        subtitle: "Open windows appear as previews next to the Trash, each with its app's icon"
                         SSwitch { t: pal; checked: root.showThumbs; onToggled: v => root.showThumbs = v }
                     }
                     SRow {
                         t: pal
-                        title: "Live window capture"
+                        title: "Window previews"
                         subtitle: "Capture open windows for the previews. Turn off and the previews show the app icon instead (Liquid Glass is not affected)"
                         SSwitch { t: pal; checked: root.windowCapture; onToggled: v => root.windowCapture = v }
                     }
@@ -3239,27 +3239,54 @@ Scope {
                     Item {
                         width: parent.width
                         height: 176
-                        SGlyph {
+                        Item {
+                            id: aboutAvatar
                             x: (parent.width - width) / 2
-                            y: 44
-                            kind: "dock"
-                            scale: 3.4
+                            y: 22
+                            width: 72
+                            height: 72
+
+                            Image {
+                                id: aboutAvatarImg
+                                anchors.fill: parent
+                                source: "file:///home/sur/Pictures/Icons/mike.png"
+                                sourceSize.width: 144
+                                sourceSize.height: 144
+                                fillMode: Image.PreserveAspectCrop
+                                smooth: true
+                                layer.enabled: true
+                                visible: false
+                            }
+                            MultiEffect {
+                                anchors.fill: parent
+                                source: aboutAvatarImg
+                                maskEnabled: true
+                                maskSource: aboutAvatarMask
+                            }
+                            Rectangle {
+                                id: aboutAvatarMask
+                                width: aboutAvatar.width
+                                height: aboutAvatar.height
+                                radius: width / 2
+                                layer.enabled: true
+                                visible: false
+                            }
                         }
                         Text {
-                            y: 108
+                            y: 102
                             width: parent.width
                             horizontalAlignment: Text.AlignHCenter
-                            text: "macshell"
+                            text: "Sur"
                             color: pal.text
                             font.family: pal.fam
                             font.pixelSize: 21
                             font.weight: Font.DemiBold
                         }
                         Text {
-                            y: 138
+                            y: 132
                             width: parent.width
                             horizontalAlignment: Text.AlignHCenter
-                            text: "Version 2 \u2022 Hyprland \u2022 Quickshell"
+                            text: "Fontaines \u2022 Hyprland \u2022 Quickshell"
                             color: pal.text2
                             font.family: pal.fam
                             font.pixelSize: 12
@@ -3316,7 +3343,7 @@ Scope {
                         Text {
                             x: 14
                             y: 12
-                            text: "Made by Rickky"
+                            text: "Compiled by"
                             color: pal.text
                             font.family: pal.fam
                             font.pixelSize: 13
@@ -3326,7 +3353,7 @@ Scope {
                             id: ghLink
                             x: 14
                             y: 33
-                            text: "https://github.com/0-ss"
+                            text: "https://github.com/luvhendrixx"
                             color: pal.accent
                             font.family: pal.fam
                             font.pixelSize: 12
@@ -3336,7 +3363,7 @@ Scope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/0-ss"])
+                                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/luvhendrixx"])
                             }
                         }
                     }
@@ -3730,7 +3757,7 @@ Scope {
         if (showThumbs) {
             for (var w = 0; w < tls.length; w++) {
                 var tl = tls[w];
-                if (!tl.appId || tl.title === "macshell Settings") continue;
+                if (!tl.appId || tl.title === "Sur Settings") continue;
                 // live capture off: a preview cell is only an app icon, so a pinned app (its icon is already in the Dock) gets none; unpinned apps keep theirs
                 if (!windowCapture && seen[keyOf(tl.appId)]) continue;
                 var e3 = lookup(tl.appId);
@@ -3825,11 +3852,6 @@ Scope {
         if (p.indexOf("file://") === 0) return p;
         return "file://" + encodeURI(p).replace(/#/g, "%23").replace(/\?/g, "%3F");
     }
-
-    // live window geometry for the backdrop compositor (polled only while Liquid Glass is on)
-    readonly property var glassClients: hub ? hub.glassClients : []
-    Binding { target: root.hub; property: "dockWantsGeo"; value: root.liquidActive && root.dockEnabled }
-    // window captures are admitted by the shared gate in shell.qml (hub.tlFor): 0.2 s after a window appears, one every 110 ms
 
     // ── smart hide: which monitors have a non-floating window on their active workspace ──
     property var busyMonitors: ({})
@@ -4027,8 +4049,10 @@ Scope {
                 }
                 Timer { id: hideTimer; interval: root.hideDelay; onTriggered: if (!ui.dragging) ui.revealed = false }
 
-                // ── Liquid Glass backdrop: wallpaper + the live windows behind the Dock, in screen coordinates ──
-                // Built from per-window captures (not a screen capture) so the Dock never ends up refracting itself.
+                // ── Liquid Glass backdrop: wallpaper + one screen capture behind the Dock, in screen coordinates ──
+                // This used to compose one live toplevel capture per window, which on Hyprland 0.57.x dies when a captured
+                // window closes and can take the whole shell with it. A monitor capture does not care when windows close.
+                // It is frozen while the Dock is visible (so the Dock never refracts itself) and refreshed while tucked.
                 Loader {
                     id: glassBackdrop
                     active: root.liquidActive
@@ -4039,7 +4063,11 @@ Scope {
                         width: win.modelData.width
                         height: win.modelData.height
 
-                        // placeholder until a wallpaper loads: deliberately colourful so a missing wallpaper is obvious
+                        property bool armed: true
+                        property bool gotFrame: false
+                        readonly property bool tucked: ui.tucked
+
+                        // placeholder until the first capture / wallpaper loads: deliberately colourful so a failure is obvious
                         Rectangle {
                             anchors.fill: parent
                             gradient: Gradient {
@@ -4060,89 +4088,48 @@ Scope {
                             smooth: true
                         }
 
-                        ListModel { id: wm }
-                        Repeater {
-                            model: wm
-                            delegate: Item {
-                                id: gw
-                                required property string addr
-                                required property real wx
-                                required property real wy
-                                required property real ww
-                                required property real wh
-                                required property real wz
-                                required property bool gone      // window closed: capture is released first, the item is swept shortly after
-                                x: wx; y: wy; width: ww; height: wh; z: wz
-                                readonly property var tl: { if (!root.hub || gone) return null; var t = root.hub.tlTick; return root.hub.tlFor(addr); }
-                                // only keep capturing windows that actually reach the Dock (+ refraction margin)
-                                // real-time: EVERY visible window stays captured (also while the Dock is tucked and for windows far from the Dock), so a window
-                                // dragged over the Dock or a revealed Dock never starts from the bare wallpaper
-                                readonly property bool nearNow: root.glassRT || (!ui.tucked
-                                    && x < dock.x + dock.width + 48 && x + width > dock.x - 48
-                                    && y < dock.y + bd.height - ui.height + dock.height + 48
-                                    && y + height > dock.y + bd.height - ui.height - 48)
-                                // a capture is only torn down 2.5 s after the window left the dock area: creating / destroying
-                                // live window captures every time a window brushes past the dock is what the compositor can choke on
-                                property bool near: false
-                                onNearNowChanged: { if (nearNow) { nearHold.stop(); near = true; } else nearHold.restart(); }
-                                Component.onCompleted: near = nearNow
-                                Timer { id: nearHold; interval: 2500; onTriggered: gw.near = gw.nearNow }
-                                Loader {
-                                    anchors.fill: parent
-                                    active: gw.near && !gw.gone
-                                    sourceComponent: ScreencopyView {
-                                        id: sc
-                                        captureSource: gw.tl
-                                        live: !root.glassHold && (root.glassRT || !ui.tucked)
-                                        onCaptureSourceChanged: { if (captureSource !== null && !live && !root.glassHold) firstShot.restart(); }
-                                        Timer {
-                                            id: firstShot
-                                            interval: 90
-                                            onTriggered: { if (sc.captureSource !== null && !sc.live && !root.glassHold && typeof sc.captureFrame === "function") sc.captureFrame(); }
-                                        }
-                                    }
-                                }
+                        ScreencopyView {
+                            id: sv
+                            anchors.fill: parent
+                            captureSource: bd.armed ? win.modelData : null
+                            live: false
+                            onCaptureSourceChanged: {
+                                bd.gotFrame = false;
+                                if (captureSource !== null) grace.restart();
+                            }
+                            onHasContentChanged: {
+                                if (hasContent) bd.gotFrame = true;
+                                else if (bd.gotFrame) rearm.restart();
                             }
                         }
 
-                        function sync() {
-                            var mon = null;
-                            for (var i = 0; i < root.monData.length; i++)
-                                if (root.monData[i].name === win.modelData.name) mon = root.monData[i];
-                            if (!mon) return;
-                            var ws = [mon.activeWorkspace ? mon.activeWorkspace.id : -999];
-                            if (mon.specialWorkspace && mon.specialWorkspace.id !== 0) ws.push(mon.specialWorkspace.id);
-                            var zoneTop = bd.height - win.height;
-                            var want = {};
-                            var cs = root.glassClients;
-                            for (var c = 0; c < cs.length; c++) {
-                                var cl = cs[c];
-                                if (!cl.mapped || cl.hidden || cl.monitor !== mon.id || ws.indexOf(cl.workspace.id) < 0) continue;
-                                var x = cl.at[0] - mon.x, y = cl.at[1] - mon.y, w = cl.size[0], h = cl.size[1];
-                                if (x + w <= 0 || x >= bd.width || y + h <= zoneTop || y >= bd.height) continue;
-                                var z = cl.floating ? 100 - Math.min(cl.focusHistoryID, 90) : 0;   // floating on top, most recently focused highest
-                                want[cl.address] = { addr: cl.address, wx: x, wy: y, ww: w, wh: h, wz: z, gone: false };
+                        // refresh only while the Dock is tucked (and the Menu Bar is not showing glass of its own)
+                        Timer {
+                            id: tick
+                            interval: (root.glassRT ? 500 : 1500) + Math.round(Math.random() * 300)
+                            repeat: true
+                            running: ui.tucked && !root.glassHold && !(root.hub && root.hub.captureQuiet)
+                                     && !(root.bar && root.bar.popCount > 0) && sv.captureSource !== null
+                            onTriggered: {
+                                if (sv.hasContent) { if (typeof sv.captureFrame === "function") sv.captureFrame(); }
+                                else if (!grace.running) rearm.restart();
                             }
-                            for (var j = wm.count - 1; j >= 0; j--) {
-                                var a = wm.get(j).addr;
-                                if (want[a] === undefined) { if (!wm.get(j).gone) { wm.setProperty(j, "gone", true); sweep.restart(); } }
-                                else { wm.set(j, want[a]); delete want[a]; }
-                            }
-                            for (var k in want) wm.append(want[k]);
-                            bd.lastCount = wm.count;
                         }
                         Timer {
-                            id: sweep
-                            interval: 600
-                            onTriggered: { for (var q = wm.count - 1; q >= 0; q--) if (wm.get(q).gone) wm.remove(q); bd.lastCount = wm.count; }
+                            id: rearm
+                            interval: bd.gotFrame ? 600 : 1600
+                            onTriggered: { bd.armed = false; Qt.callLater(function () { bd.armed = true; }); }
                         }
-                        property int lastCount: -1
-                        Connections {
-                            target: root
-                            function onGlassClientsChanged() { bd.sync(); }
-                            function onMonDataChanged() { bd.sync(); }
+                        Timer { id: grace; interval: 1200 }
+                        // let the hide animation finish before grabbing a clean frame without the Dock in it
+                        Timer {
+                            id: refreshSoon
+                            interval: 350
+                            onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
                         }
-                        Component.onCompleted: sync()
+                        onTuckedChanged: {
+                            if (tucked && !root.glassHold && !(root.hub && root.hub.captureQuiet)) refreshSoon.restart();
+                        }
                     }
                 }
 
@@ -4301,6 +4288,8 @@ Scope {
                                 readonly property var thumbWin: (!isSep && modelData.kind === "win") ? modelData.tl : null
                                 readonly property bool useThumb: thumbWin !== null
                                 readonly property bool thumbReady: useThumb && (sv.hasContent === undefined || sv.hasContent === true)
+                                readonly property bool dockTucked: ui.tucked
+                                onDockTuckedChanged: if (!dockTucked && !root.captureHold) pvShot.restart()
 
                                 property real dx: {
                                     if (!ui.dragging || isSep) return 0;
@@ -4427,11 +4416,19 @@ Scope {
                                         id: sv
                                         anchors.centerIn: parent
                                         captureSource: root.captureCut ? null : cell.thumbWin
-                                        live: !ui.tucked && !root.captureHold          // only keep capturing while the dock is on screen
+                                        // A single frame per reveal instead of a live toplevel capture: live toplevel captures die
+                                        // on Hyprland 0.57.x when the captured window closes, which could kill the whole shell.
+                                        live: false
+                                        onCaptureSourceChanged: if (captureSource !== null && !root.captureHold) pvShot.restart()
                                         readonly property real ar: (implicitWidth > 0 && implicitHeight > 0)
                                                                    ? implicitWidth / implicitHeight : 4 / 3
                                         width: Math.min(th.width, th.height * ar)
                                         height: width / ar
+                                    }
+                                    Timer {
+                                        id: pvShot
+                                        interval: 100
+                                        onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame()
                                     }
                                     Rectangle {      // thin frame + pressed dimming
                                         anchors.fill: sv

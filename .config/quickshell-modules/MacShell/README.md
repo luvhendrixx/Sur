@@ -105,7 +105,7 @@ hl.layer_rule({ name = "macbarbg", match = { namespace = "macbarbg" }, blur = tr
 hl.layer_rule({ name = "macshot",  match = { namespace = "macshot"  }, no_anim = true })   -- optional: no fade on the screenshot picker
 
 -- Settings window (fixed size). Hyprland usually floats it on its own; if it tiles, add a float rule for the title
--- "macshell Settings" (see /usr/share/hypr/hyprland.lua for the window_rule syntax of your version).
+-- "Sur Settings" (see /usr/share/hypr/hyprland.lua for the window_rule syntax of your version).
 
 -- keybinds (the name after -c must match your folder name)
 
@@ -130,7 +130,7 @@ Also make sure **blur is enabled** in your Hyprland `decoration` settings, or th
 | `wallpapers` | `toggle`, `open`, `close` |
 | `switcher` | `next`, `prev`, `commit`, `cancel` |
 | `settings` | `open` (works even if both the bar and the Dock are disabled) |
-| `glass` | `captures true\|false` (window previews on/off, same as Settings → Dock → *Live window capture*) |
+| `glass` | `captures true\|false` (window previews on/off, same as Settings → Dock → *Window previews*) |
 
 ## Wallpaper
 
@@ -162,26 +162,27 @@ in `~/.config/macbar/settings.json` if you don't want that.
 | Blank app icons | No Qt icon theme: set one (`qt6ct`, or `QS_ICON_THEME`) and install it. |
 | No notifications | Another daemon owns the D-Bus name. Disable it and restart the shell. |
 | Window menu actions, Alt+Tab focus, paste-after-pick or Log Out do nothing | Not on a Lua-config Hyprland 0.55+: run `hyprctl dispatch 'hl.dsp.no_op()'`. |
-| No window previews / glass behind windows | Quickshell built without Hyprland Toplevel Export, or Settings → Dock → *Live window capture* is off. |
+| No window previews | Quickshell built without Hyprland Toplevel Export, or Settings → Dock → *Window previews* is off. |
 | Log | `qs log` (see `qs --help` for selecting the config). |
 
 ## Known issues
 
 **Shell crash with `wl_display#1: error 0: invalid object NNN`** when many windows open/close quickly (a game launching,
-spamming terminals) while live window capture runs. A window closes while a capture frame for it is still pending; Hyprland
-does not answer that frame, the shell then destroys it, and the compositor drops the Wayland connection. Mitigations:
+spamming terminals) while live window capture (Dock thumbnails) runs. A window closes while a capture frame for it is still pending; Hyprland
+does not answer that frame, the shell then destroys it, and the compositor drops the Wayland connection.
 
-- Settings → Menu Bar → turn **Real-time glass** off (far fewer captures; the biggest win).
-- Settings → Dock → turn **Live window capture** off.
-- The shell already pauses glass captures while windows open/close.
+The Menu Bar glass and the Dock glass no longer capture individual windows: they use one monitor (output) capture, which
+is not tied to any window and therefore survives windows closing. The capture is refreshed only while no glass is visible
+and frozen while glass is shown, so it also never captures the shell's own popovers or hidden special workspaces. The
+Dock's window thumbnails are still per-window captures, but they now take a single frame when the Dock is revealed instead
+of running live.
+
+If the crash still happens, check for an old settings override and as a last resort disable the remaining captures:
+
+- Settings → Dock → turn **Window previews** off (also removes the Dock thumbnails).
 - Auto-restart it: `sh -c 'while :; do qs -c macshell; sleep 1; done'` as the autostart command.
 
-Glitchy window capture,
-Can be disabled in Settings:
-
-- Settings → Dock → turn **Live window capture** off.
-
-Reproduced on Hyprland 0.56.2 / Quickshell 0.3.2
+Reproduced on Hyprland 0.56.2 / Quickshell 0.3.2; the monitor-capture fix targets Hyprland 0.57.x.
 
 ## Credits
 
