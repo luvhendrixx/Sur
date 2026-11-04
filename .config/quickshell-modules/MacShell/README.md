@@ -3,6 +3,8 @@
 A macOS Tahoe–style **menu bar + Dock** for Hyprland, built on [Quickshell](https://quickshell.org), with a real-time
 "Liquid Glass" refraction shader, window previews, Spotlight, clipboard/emoji picker, notifications, Control Center,
 screenshots,record video, a wallpaper picker and an Alt+Tab switcher — all in one Quickshell process.
+The Dock can sit on any screen edge (**Settings → Dock → Position on screen**: bottom, top, left or right).
+The active Hyprland workspace can be appended to **Help** in the menu bar (**Settings → Menu Bar → Show workspace number**, e.g. `Help 5`).
 
 Best Icon Pack for the shell is here : https://github.com/Scrimas/MacOS-Like
 
@@ -18,8 +20,9 @@ Best Icon Pack for the shell is here : https://github.com/Scrimas/MacOS-Like
 | `MacDock.qml` | Dock, window previews, and the Settings window. |
 | `liquidglass.frag` | Liquid Glass fragment shader (compiled to `.qsb` on first run). |
 | `EmojiData.js` | Emoji fallback data for Spotlight (from [gemoji](https://github.com/github/gemoji), MIT). |
+| `assets/Sur.png` | Avatar shown in Settings → About. |
 
-Keep all five files in the same folder.
+Keep these files and the `assets/` folder together in the same directory.
 
 ## Requirements
 
