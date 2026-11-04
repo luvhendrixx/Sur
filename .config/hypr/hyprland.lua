@@ -30,7 +30,8 @@ hl.on("hyprland.start", function()
 	-- awww-daemon alone draws nothing; a fresh machine would boot black.
 	hl.exec_cmd(home .. "/.config/hypr/scripts/wallpaper-init.sh")
 	hl.exec_cmd("qs")
-	hl.exec_cmd(home .. "/.config/hypr/scripts/powerprofile-auto.sh")
+	// auto-cpufreq (systemd service) already switches governors on AC/battery by itself;
+	// the old powerprofile-auto.sh drove powerprofilesctl, whose daemon is masked here.
 	hl.exec_cmd("hypridle")    -- idle → MacLock (see hypridle.conf)
 end)
 
