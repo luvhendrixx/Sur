@@ -111,6 +111,7 @@ Scope {
     property bool use24h: false
     property bool showDate: true
     property bool showSeconds: false
+    property bool showWorkspaceNumber: false   // append the active workspace to the end of Help (e.g. "Help 5")
     property bool showBatteryPercent: true
     property bool showTray: true
     property bool showSearch: true
@@ -154,7 +155,7 @@ Scope {
 
     readonly property var settingKeys: ["barEnabled", "darkMode", "accent", "fontFamily", "barHeight", "glassOpacity",
         "barStyle", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "barBgOpacity", "glassRealtime", "glassDebug", "wallpaperPath", "use24h", "showDate",
-        "showSeconds", "showBatteryPercent", "showTray", "showSearch", "webSearchEngine", "barLogoMode", "barCustomLogoPath", "barWidgets", "weekStartsMonday", "terminal", "launcher",
+        "showSeconds", "showWorkspaceNumber", "showBatteryPercent", "showTray", "showSearch", "webSearchEngine", "barLogoMode", "barCustomLogoPath", "barWidgets", "weekStartsMonday", "terminal", "launcher",
         "filesCmd", "clipboardCmd", "appUsage", "spHiddenApps", "clipHistory", "clipAutoPaste", "emojiRecent", "powerMode", "screenshotDir", "screenshotSave", "screenshotClipboard", "screenshotNotify", "nightTemp", "ccControls", "ccMigRec", "ccMigRem", "remMigBar", "remShowBadge", "wallpaperDir", "wallpaperFavs", "wallpaperCmd"]
     // Optional bar widgets; tray and Spotlight use their existing showTray/showSearch settings.
     property var barWidgets: ["appleMenu", "appMenus", "volume", "keyboard", "reminders", "notifications", "bluetooth", "privacy", "controlCenter", "clock"]
@@ -1294,6 +1295,14 @@ Scope {
             }
         }
     }
+    // current Hyprland workspace number (empty on special/unnamed workspaces)
+    readonly property string workspaceNumber: {
+        var w = Hyprland.focusedWorkspace;
+        if (!w || !w.id || w.id <= 0) return "";
+        return String(w.id);
+    }
+    readonly property int menuTitleHPad: 10
+    readonly property int menuTitleSpacing: menuTitleHPad * 2
     readonly property var menuTitles: [
         { id: "apple", label: "" },
         { id: "app", label: appName, bold: true },
@@ -1301,7 +1310,7 @@ Scope {
         { id: "edit", label: "Edit" },
         { id: "view", label: "View" },
         { id: "window", label: "Window" },
-        { id: "help", label: "Help" }
+        { id: "help", label: "Help", suffix: (showWorkspaceNumber && workspaceNumber !== "") ? workspaceNumber : "" }
     ]
 
     // audio
@@ -3039,7 +3048,7 @@ Scope {
     function resetSettings() {
         barEnabled = true;
         darkMode = true; accent = "#0a84ff"; fontFamily = "Inter"; glassOpacity = 0.42; glassBlur = 5; barBgOpacity = 0.10; glassRealtime = false;
-        barStyle = "liquid"; use24h = false; showDate = true; showSeconds = false; showBatteryPercent = true;
+        barStyle = "liquid"; use24h = false; showDate = true; showSeconds = false; showWorkspaceNumber = false; showBatteryPercent = true;
         powerMode = "balanced";
         showTray = true; showSearch = true;
         barLogoMode = "apple"; barCustomLogoPath = "";
@@ -4346,7 +4355,7 @@ Scope {
                                 id: mt
                                 required property var modelData
                                 readonly property bool open: ui.pop === modelData.id
-                                width: modelData.id === "apple" ? 30 : tl.implicitWidth + 20
+                                width: modelData.id === "apple" ? 30 : tl.implicitWidth + root.menuTitleHPad * 2
                                 height: 28
                                 Rectangle {
                                     anchors.centerIn: parent
@@ -4391,15 +4400,26 @@ Scope {
                                     kind: "arch"
                                     color: pal.fg
                                 }
-                                Text {
+                                Row {
                                     id: tl
                                     visible: mt.modelData.id !== "apple"
                                     anchors.centerIn: parent
-                                    text: mt.modelData.label
-                                    color: pal.fg
-                                    font.family: pal.fam
-                                    font.pixelSize: 13
-                                    font.weight: mt.modelData.bold ? Font.Bold : Font.Normal
+                                    spacing: root.menuTitleSpacing
+                                    Text {
+                                        text: mt.modelData.label
+                                        color: pal.fg
+                                        font.family: pal.fam
+                                        font.pixelSize: 13
+                                        font.weight: mt.modelData.bold ? Font.Bold : Font.Normal
+                                    }
+                                    Text {
+                                        visible: mt.modelData.suffix !== undefined && mt.modelData.suffix !== ""
+                                        text: mt.modelData.suffix !== undefined ? mt.modelData.suffix : ""
+                                        color: pal.fg
+                                        font.family: pal.fam
+                                        font.pixelSize: 13
+                                        font.weight: mt.modelData.bold ? Font.Bold : Font.Normal
+                                    }
                                 }
                                 MouseArea {
                                     anchors.fill: parent

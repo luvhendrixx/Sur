@@ -48,6 +48,14 @@ Scope {
     property string monitor: ""          // "" = every monitor, or e.g. "DP-1"
     property int iconSize: 52
     property real magnification: 1.7     // peak icon scale
+    property string dockPosition: "bottom"   // "bottom" | "top" | "left" | "right"
+    readonly property bool dockVertical: dockPosition === "left" || dockPosition === "right"
+    readonly property bool dockAtTop: dockPosition === "top"
+    readonly property bool dockAtBottom: dockPosition === "bottom"
+    readonly property bool dockAtLeft: dockPosition === "left"
+    readonly property bool dockAtRight: dockPosition === "right"
+    // keep a top Dock below the menu bar when the bar is enabled
+    readonly property int topInset: (dockAtTop && bar && bar.barEnabled) ? bar.barHeight : 0
     property int spacing: 6
     property int hPad: 10
     property int topPad: 8
@@ -543,9 +551,9 @@ Scope {
             { id: "profile",    name: "User",         glyph: "profile",    c1: "#8E8E93", c2: "#636366",
               keys: "user profile avatar picture face account name username lock screen change reset image" },
             { id: "dock",       name: "Dock",         glyph: "dock",       c1: "#4FA8FF", c2: "#0A6CFF",
-              keys: "size icon magnification zoom spacing margin distance edge behaviour behavior hide delay labels tooltip indicators bounce trash trashcan display monitor preview thumbnail applications apps pinned keep reset" },
+              keys: "size icon magnification zoom spacing margin distance edge position top left right bottom side behaviour behavior hide delay labels tooltip indicators bounce trash trashcan display monitor preview thumbnail applications apps pinned keep reset" },
             { id: "menubar",    name: "Menu Bar",     glyph: "menubar",    c1: "#7D7AFF", c2: "#4B48D6",
-              keys: "panel bar height clock date seconds 24 hour battery tray search spotlight week monday style liquid bluetooth widget" },
+              keys: "panel bar height clock date seconds 24 hour workspace number help battery tray search spotlight week monday style liquid bluetooth widget" },
             { id: "appearance", name: "Appearance",   glyph: "appearance", c1: "#636366", c2: "#1C1C1E",
               keys: "theme dark light mode accent color glass liquid apple style translucency blur corner radius font" },
             { id: "widgets",    name: "Widgets",      glyph: "widgets",    c1: "#FF6482", c2: "#FF375F",
@@ -972,7 +980,7 @@ Scope {
                     SRow {
                         t: pal
                         title: "Dock"
-                        subtitle: "Show the Dock at the bottom of the screen"
+                        subtitle: "Show the Dock on screen"
                         SSwitch { t: pal; checked: root.dockEnabled; onToggled: v => root.dockEnabled = v }
                     }
                     SRow {
@@ -1641,6 +1649,16 @@ Scope {
                     }
                     SRow {
                         t: pal
+                        title: "Show workspace number"
+                        subtitle: "Append the active workspace to Help, e.g. \u201cHelp 5\u201d"
+                        SSwitch {
+                            t: pal
+                            checked: root.bar ? root.bar.showWorkspaceNumber : false
+                            onToggled: v => { if (root.bar) root.bar.showWorkspaceNumber = v; }
+                        }
+                    }
+                    SRow {
+                        t: pal
                         title: "Show date"
                         SSwitch {
                             t: pal
@@ -1927,8 +1945,24 @@ Scope {
                     SRow {
                         t: pal
                         title: "Show the Dock"
-                        subtitle: "Show the Dock at the bottom of the screen"
+                        subtitle: "Show the Dock on screen"
                         SSwitch { t: pal; checked: root.dockEnabled; onToggled: v => root.dockEnabled = v }
+                    }
+                }
+
+                SCard {
+                    t: pal
+                    SRow {
+                        t: pal
+                        title: "Position on screen"
+                        subtitle: "Move the Dock to the bottom, top, left or right edge"
+                        SSegmented {
+                            t: pal
+                            model: ["Bottom", "Top", "Left", "Right"]
+                            segWidth: 64
+                            current: Math.max(0, ["bottom", "top", "left", "right"].indexOf(root.dockPosition))
+                            onPicked: i => root.dockPosition = ["bottom", "top", "left", "right"][i]
+                        }
                     }
                 }
 
@@ -3249,7 +3283,7 @@ Scope {
                             Image {
                                 id: aboutAvatarImg
                                 anchors.fill: parent
-                                source: "file:///home/sur/Pictures/Icons/mike.png"
+                                source: root.assetUrl("Sur.png")
                                 sourceSize.width: 144
                                 sourceSize.height: 144
                                 fillMode: Image.PreserveAspectCrop
@@ -3422,6 +3456,7 @@ Scope {
         iconSize = 52; magnification = 1.7; magnificationEnabled = true;
         spacing = 6; margin = 6; cornerRadius = 18;
         darkMode = true; glassOpacity = 0.42; glassBlur = 5; glassLiquid = 1.0; dockStyle = "blur"; accent = "#0a84ff"; fontFamily = "Inter";
+        dockPosition = "bottom";
         hideMode = "smart"; hideDelay = 450; monitor = "";
         showTrash = true; showLabels = true; showIndicators = true; bounceOnLaunch = true; showThumbs = true; windowCapture = true;
     }
@@ -3429,7 +3464,7 @@ Scope {
     // ── settings persistence (~/.config/macdock/settings.json) ──
     readonly property string settingsSig: [dockEnabled, iconSize, magnification, magnificationEnabled, spacing, margin,
         cornerRadius, darkMode, glassOpacity, glassBlur, glassLiquid, dockStyle, wallpaperPath, String(accent), fontFamily, hideMode, hideDelay, monitor,
-        showTrash, showLabels, showIndicators, bounceOnLaunch, showThumbs, windowCapture].join("|")
+        dockPosition, showTrash, showLabels, showIndicators, bounceOnLaunch, showThumbs, windowCapture].join("|")
     property bool settingsReady: false
     onSettingsSigChanged: if (settingsReady) saveTimer.restart()
     onShowTrashChanged: { rebuild(); if (showTrash) trashCheck(); }
@@ -3443,7 +3478,7 @@ Scope {
             darkMode: darkMode, glassOpacity: glassOpacity, dockStyle: dockStyle, wallpaperPath: wallpaperPath, glassDebug: glassDebug,
             glassRim: glassRim, glassGrain: glassGrain, glassLiquid: glassLiquid, glassBlur: glassBlur,
             accent: String(accent), fontFamily: fontFamily,
-            hideMode: hideMode, hideDelay: hideDelay, monitor: monitor,
+            hideMode: hideMode, hideDelay: hideDelay, monitor: monitor, dockPosition: dockPosition,
             showTrash: showTrash, showLabels: showLabels, showIndicators: showIndicators,
             bounceOnLaunch: bounceOnLaunch, showThumbs: showThumbs, windowCapture: windowCapture
         };
@@ -3453,7 +3488,7 @@ Scope {
     function applySettings(o) {
         if (!o || typeof o !== "object") return;
         var keys = ["dockEnabled", "iconSize", "magnification", "magnificationEnabled", "spacing", "margin", "cornerRadius",
-                    "darkMode", "glassOpacity", "dockStyle", "wallpaperPath", "glassDebug", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "accent", "fontFamily", "hideMode", "hideDelay", "monitor",
+                    "darkMode", "glassOpacity", "dockStyle", "wallpaperPath", "glassDebug", "glassRim", "glassGrain", "glassLiquid", "glassBlur", "accent", "fontFamily", "hideMode", "hideDelay", "monitor", "dockPosition",
                     "showTrash", "showLabels", "showIndicators", "bounceOnLaunch", "showThumbs", "windowCapture"];
         for (var i = 0; i < keys.length; i++) {
             if (o[keys[i]] === undefined) continue;
@@ -3945,8 +3980,14 @@ Scope {
             screen: modelData
             visible: root.monitor === "" || modelData.name === root.monitor
 
-            anchors { left: true; right: true; bottom: true }
-            implicitHeight: root.windowHeight
+            anchors {
+                left: !root.dockVertical || root.dockAtLeft
+                right: !root.dockVertical || root.dockAtRight
+                top: root.dockVertical || root.dockAtTop
+                bottom: root.dockVertical || root.dockAtBottom
+            }
+            implicitWidth: root.dockVertical ? root.windowHeight : 0
+            implicitHeight: root.dockVertical ? 0 : root.windowHeight
             color: "transparent"
 
             exclusionMode: ExclusionMode.Normal
@@ -3963,12 +4004,20 @@ Scope {
 
                 property real mx: 0
                 Behavior on mx { NumberAnimation { duration: 55; easing.type: Easing.OutQuad } }
+                property real my: 0
+                Behavior on my { NumberAnimation { duration: 55; easing.type: Easing.OutQuad } }
                 property bool revealed: false
                 property var menuItem: null
                 property var menuModel: []
                 property string armed: ""            // label of a confirm-type entry that was clicked once (e.g. Empty Trash)
                 onMenuItemChanged: armed = ""
                 property real menuCx: 0
+                property real menuCy: 0
+                // screen-space offset of the monitor capture inside this panel (see the glass backdrop below)
+                readonly property real backdropX: (root.dockVertical && root.dockAtRight)
+                                                  ? -(win.modelData.width - width) : 0
+                readonly property real backdropY: (!root.dockVertical && root.dockAtBottom)
+                                                  ? -(win.modelData.height - height) : 0
                 readonly property bool menuOpen: menuItem !== null
                 readonly property bool wantsHide: root.hideMode === "always"
                     || (root.hideMode === "smart" && root.busyMonitors[win.modelData.name] === true)
@@ -3991,8 +4040,11 @@ Scope {
                     return n;
                 }
                 function naturalCenter(i) {
-                    var c = rep.itemAt(i);
-                    return c ? row.mapToItem(ui, c.x + c.width / 2, 0).x : 0;
+                    var c = root.dockVertical ? colRep.itemAt(i) : rowRep.itemAt(i);
+                    if (!c) return 0;
+                    return root.dockVertical
+                        ? col.mapToItem(ui, 0, c.y + c.height / 2).y
+                        : row.mapToItem(ui, c.x + c.width / 2, 0).x;
                 }
                 function beginDrag(index, key, pressX, shiftW) {
                     menuItem = null;
@@ -4033,15 +4085,30 @@ Scope {
 
                 readonly property bool tucked: wantsHide && !revealed && !menuOpen && !dragging
                 readonly property real refLeft: (width - root.totalW0) / 2
+                readonly property real refTop: (height - root.totalW0) / 2
                 readonly property real activeTop: height - root.margin - root.bgHeight
                                                   - root.iconSize * (root.effMag - 1) - 12
-                readonly property bool active: dragging || (hh.hovered && hh.point.position.y > activeTop && !tucked)
+                readonly property real activeBottom: root.topInset + root.margin + root.bgHeight
+                                                     + root.iconSize * (root.effMag - 1) + 12
+                readonly property real activeLeft: root.margin + root.bgHeight
+                                                  + root.iconSize * (root.effMag - 1) + 12
+                readonly property real activeRight: width - root.margin - root.bgHeight
+                                                    - root.iconSize * (root.effMag - 1) - 12
+                readonly property bool active: dragging || (hh.hovered && !tucked
+                    && (!root.dockVertical
+                        ? (root.dockAtTop ? hh.point.position.y < activeBottom
+                                          : hh.point.position.y > activeTop)
+                        : (root.dockAtLeft ? hh.point.position.x < activeLeft
+                                           : hh.point.position.x > activeRight)))
                 property real strength: active ? 1 : 0
                 Behavior on strength { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
                 HoverHandler {
                     id: hh
-                    onPointChanged: if (hovered && !ui.dragging) ui.mx = point.position.x
+                    onPointChanged: if (hovered && !ui.dragging) {
+                        ui.mx = point.position.x;
+                        ui.my = point.position.y;
+                    }
                     onHoveredChanged: {
                         if (hovered) { hideTimer.stop(); ui.revealed = true; }
                         else hideTimer.restart();
@@ -4058,8 +4125,8 @@ Scope {
                     active: root.liquidActive
                     sourceComponent: Item {
                         id: bd
-                        x: 0
-                        y: -(win.modelData.height - ui.height)
+                        x: ui.backdropX
+                        y: ui.backdropY
                         width: win.modelData.width
                         height: win.modelData.height
 
@@ -4135,19 +4202,41 @@ Scope {
 
                 Item {
                     id: maskItem
-                    x: ui.menuOpen ? 0 : dock.x
-                    width: ui.menuOpen ? ui.width : dock.width
-                    y: ui.menuOpen ? 0 : (ui.tucked ? ui.height - 3 : (hh.hovered ? ui.activeTop : dock.y))
-                    height: ui.height - y
+                    x: ui.menuOpen ? 0
+                       : (!root.dockVertical ? 0
+                          : (root.dockAtLeft ? 0
+                             : (ui.tucked ? ui.width - 3 : (hh.hovered ? ui.activeRight : dock.x))))
+                    width: ui.menuOpen ? ui.width
+                         : (!root.dockVertical ? ui.width
+                            : (root.dockAtLeft ? (ui.tucked ? 3 : (hh.hovered ? ui.activeLeft : dock.x + dock.width))
+                                               : ui.width - x))
+                    y: ui.menuOpen ? 0
+                       : (!root.dockVertical
+                          ? (root.dockAtTop ? root.topInset
+                                            : (ui.tucked ? ui.height - 3 : (hh.hovered ? ui.activeTop : dock.y)))
+                          : 0)
+                    height: ui.menuOpen ? ui.height
+                          : (!root.dockVertical
+                             ? (root.dockAtTop ? (ui.tucked ? 3 : (hh.hovered ? ui.activeBottom - root.topInset : dock.y + dock.height - root.topInset))
+                                               : ui.height - y)
+                             : ui.height)
                 }
 
                 Item {
                     id: dock
-                    width: row.width + root.hPad * 2
-                    height: root.bgHeight
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: ui.height - root.margin - height + (ui.tucked ? height + root.margin + 6 : 0)
-                    Behavior on y { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                    width: root.dockVertical ? root.bgHeight : row.width + root.hPad * 2
+                    height: root.dockVertical ? col.height + root.hPad * 2 : root.bgHeight
+                    x: root.dockVertical
+                       ? (root.dockAtLeft ? root.margin - (ui.tucked ? width + root.margin + 6 : 0)
+                                          : ui.width - root.margin - width + (ui.tucked ? width + root.margin + 6 : 0))
+                       : (ui.width - width) / 2
+                    y: !root.dockVertical
+                       ? (root.dockAtTop
+                          ? root.topInset + root.margin - (ui.tucked ? height + root.margin + 6 : 0)
+                          : ui.height - root.margin - height + (ui.tucked ? height + root.margin + 6 : 0))
+                       : (ui.height - height) / 2
+                    Behavior on x { enabled: root.dockVertical; NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                    Behavior on y { enabled: !root.dockVertical; NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
                     // ── Apple Liquid Glass: real-time refraction of the backdrop (see liquidglass.frag) ──
                     Loader {
@@ -4167,8 +4256,8 @@ Scope {
                                 hideSource: true
                                 live: !ui.tucked
                                 visible: false
-                                sourceRect: Qt.rect(dock.x - parent.padPx - parent.margin,
-                                                    dock.y + (win.modelData.height - ui.height) - parent.padPx - parent.margin,
+                                sourceRect: Qt.rect(dock.x - ui.backdropX - parent.padPx - parent.margin,
+                                                    dock.y - ui.backdropY - parent.padPx - parent.margin,
                                                     dock.width + 2 * (parent.padPx + parent.margin),
                                                     dock.height + 2 * (parent.padPx + parent.margin))
                                 textureSize: Qt.size(Math.max(1, Math.round(sourceRect.width * dg.ds)), Math.max(1, Math.round(sourceRect.height * dg.ds)))
@@ -4263,19 +4352,9 @@ Scope {
                         }
                     }
 
-                    Row {
-                        id: row
-                        spacing: root.spacing
-                        height: root.iconSize
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: root.bottomPad
-
-                        Repeater {
-                            id: rep
-                            model: root.items
-
-                            delegate: Item {
+                    Component {
+                        id: iconDelegate
+                        Item {
                                 id: cell
                                 required property var modelData
                                 required property int index
@@ -4292,7 +4371,12 @@ Scope {
                                 onDockTuckedChanged: if (!dockTucked && !root.captureHold) pvShot.restart()
 
                                 property real dx: {
-                                    if (!ui.dragging || isSep) return 0;
+                                    if (root.dockVertical || !ui.dragging || isSep) return 0;
+                                    if (isDragged) return ui.dragDelta;
+                                    return ui.shiftFor(index);
+                                }
+                                property real dy: {
+                                    if (!root.dockVertical || !ui.dragging || isSep) return 0;
                                     if (isDragged) return ui.dragDelta;
                                     return ui.shiftFor(index);
                                 }
@@ -4300,7 +4384,11 @@ Scope {
                                     enabled: !cell.isDragged
                                     NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
                                 }
-                                transform: Translate { x: cell.dx }
+                                Behavior on dy {
+                                    enabled: !cell.isDragged
+                                    NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                                }
+                                transform: Translate { x: cell.dx; y: cell.dy }
                                 z: isDragged ? 100 : 0
                                 opacity: isDragged ? 0.92 : 1
 
@@ -4313,19 +4401,26 @@ Scope {
                                                            + (isSep ? root.sepWidth : root.iconSize) / 2
                                 readonly property real s: {
                                     if (isSep) return 1;
-                                    var dist = Math.abs(ui.mx - ui.refLeft - cell.c0);
+                                    var mainPos = root.dockVertical ? ui.my - ui.refTop : ui.mx - ui.refLeft;
+                                    var dist = Math.abs(mainPos - cell.c0);
                                     var R = root.magRadius;
                                     var f = dist < R ? 0.5 * (1 + Math.cos(Math.PI * dist / R)) : 0;
                                     return 1 + (root.effMag - 1) * f * ui.strength;
                                 }
 
-                                width: isSep ? root.sepWidth : root.iconSize * s * appear
-                                height: root.iconSize
+                                // A vertical separator must fill the cross-axis cell so its line
+                                // stays centered under the icons; only its length is sepWidth.
+                                width: root.dockVertical
+                                       ? root.iconSize
+                                       : (isSep ? root.sepWidth : root.iconSize * s * appear)
+                                height: root.dockVertical
+                                        ? (isSep ? root.sepWidth : root.iconSize * s * appear)
+                                        : root.iconSize
 
                                 Rectangle {
                                     visible: cell.isSep
-                                    width: 1
-                                    height: root.iconSize * 0.85
+                                    width: root.dockVertical ? root.iconSize * 0.85 : 1
+                                    height: root.dockVertical ? 1 : root.iconSize * 0.85
                                     anchors.centerIn: parent
                                     color: root.darkMode ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(0, 0, 0, 0.22)
                                 }
@@ -4337,8 +4432,12 @@ Scope {
                                     width: root.iconSize * cell.s * cell.appear
                                     height: width
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
+                                    anchors.verticalCenter: root.dockVertical ? parent.verticalCenter : undefined
+                                    anchors.bottom: (!root.dockVertical && !root.dockAtTop) ? parent.bottom : undefined
+                                    anchors.top: (!root.dockVertical && root.dockAtTop) ? parent.top : undefined
                                     anchors.bottomMargin: lift
+                                    anchors.topMargin: -lift
+                                    transform: Translate { y: root.dockVertical ? -img.lift : 0 }
                                     source: cell.isSep ? "" : root.cellIconSrc(cell.modelData)
                                     sourceSize: Qt.size(Math.ceil(root.iconSize * root.magnification * 1.25),
                                                         Math.ceil(root.iconSize * root.magnification * 1.25))
@@ -4369,8 +4468,11 @@ Scope {
                                     visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
                                     width: iconFallback.width + 4; height: width
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
+                                    anchors.verticalCenter: root.dockVertical ? parent.verticalCenter : undefined
+                                    anchors.bottom: (!root.dockVertical && !root.dockAtTop) ? parent.bottom : undefined
+                                    anchors.top: (!root.dockVertical && root.dockAtTop) ? parent.top : undefined
                                     anchors.bottomMargin: img.lift - 4
+                                    anchors.topMargin: -(img.lift - 4)
                                     radius: width * 0.22
                                     color: Qt.rgba(0, 0, 0, 0.22)
                                 }
@@ -4380,8 +4482,11 @@ Scope {
                                     visible: !cell.isSep && !cell.thumbReady && String(img.source) === ""
                                     width: img.width; height: width
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
+                                    anchors.verticalCenter: root.dockVertical ? parent.verticalCenter : undefined
+                                    anchors.bottom: (!root.dockVertical && !root.dockAtTop) ? parent.bottom : undefined
+                                    anchors.top: (!root.dockVertical && root.dockAtTop) ? parent.top : undefined
                                     anchors.bottomMargin: img.lift
+                                    anchors.topMargin: -img.lift
                                     radius: width * 0.22
                                     gradient: Gradient {
                                         GradientStop { position: 0; color: root.darkMode ? "#8E8E93" : "#AEAEB2" }
@@ -4458,8 +4563,9 @@ Scope {
                                     visible: !cell.isSep && cell.modelData.running && root.showIndicators
                                     width: 4; height: 4; radius: 2
                                     color: root.darkMode ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(0, 0, 0, 0.6)
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    y: cell.height + 3
+                                    x: root.dockVertical ? (root.dockAtLeft ? cell.width - 2 : -2)
+                                                         : (cell.width - width) / 2
+                                    y: root.dockVertical ? (cell.height - height) / 2 : cell.height + 3
                                 }
 
                                 SequentialAnimation {
@@ -4484,8 +4590,11 @@ Scope {
                                     color: Qt.rgba(0.12, 0.12, 0.13, 0.72)
                                     border.width: 1
                                     border.color: Qt.rgba(1, 1, 1, 0.12)
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    y: cell.height - img.height - img.lift - height - 10
+                                    x: root.dockVertical ? (root.dockAtLeft ? cell.width + 10 : -width - 10)
+                                                         : (cell.width - width) / 2
+                                    y: root.dockVertical ? (cell.height - height) / 2
+                                                         : (root.dockAtTop ? img.height + img.lift + 10
+                                                                           : cell.height - img.height - img.lift - height - 10)
 
                                     Text {
                                         id: label
@@ -4500,25 +4609,32 @@ Scope {
                                 MouseArea {
                                     id: ma
                                     visible: !cell.isSep
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
-                                    anchors.bottomMargin: -root.bottomPad
-                                    width: cell.width
-                                    height: img.height + root.bottomPad
+                                    width: root.dockVertical ? cell.width + root.topPad + root.bottomPad : cell.width
+                                    height: root.dockVertical ? cell.height
+                                                              : img.height + (root.dockAtTop ? root.topPad : root.bottomPad)
+                                    x: root.dockVertical ? (root.dockAtLeft ? -root.topPad : -root.bottomPad)
+                                                         : (cell.width - width) / 2
+                                    y: root.dockVertical ? 0
+                                                         : (root.dockAtTop ? -root.topPad : cell.height - img.height)
                                     hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                                     property real pressX: 0
 
                                     onPressed: mouse => {
                                         if (mouse.button === Qt.LeftButton)
-                                            pressX = ma.mapToItem(ui, mouse.x, 0).x;
+                                            pressX = root.dockVertical
+                                                     ? ma.mapToItem(ui, 0, mouse.y).y
+                                                     : ma.mapToItem(ui, mouse.x, 0).x;
                                     }
                                     onPositionChanged: mouse => {
                                         if (!cell.canDrag || !(pressedButtons & Qt.LeftButton)) return;
-                                        var ax = ma.mapToItem(ui, mouse.x, 0).x;
+                                        var ax = root.dockVertical
+                                                 ? ma.mapToItem(ui, 0, mouse.y).y
+                                                 : ma.mapToItem(ui, mouse.x, 0).x;
                                         if (!ui.dragging) {
                                             if (Math.abs(ax - pressX) < 8) return;
-                                            ui.beginDrag(cell.index, cell.modelData.key, pressX, cell.width + root.spacing);
+                                            ui.beginDrag(cell.index, cell.modelData.key, pressX,
+                                                         (root.dockVertical ? cell.height : cell.width) + root.spacing);
                                         }
                                         if (cell.isDragged) ui.dragUpdate(ax);
                                     }
@@ -4528,7 +4644,9 @@ Scope {
                                     onClicked: mouse => {
                                         if (ui.justDragged) return;
                                         if (mouse.button === Qt.RightButton) {
-                                            ui.menuCx = cell.mapToItem(ui, cell.width / 2, 0).x;
+                                            var p = cell.mapToItem(ui, cell.width / 2, cell.height / 2);
+                                            ui.menuCx = p.x;
+                                            ui.menuCy = p.y;
                                             ui.menuModel = root.menuFor(cell.modelData);
                                             ui.menuItem = cell.modelData;
                                         } else {
@@ -4536,7 +4654,36 @@ Scope {
                                         }
                                     }
                                 }
-                            }
+                        }   // cell
+                    }   // iconDelegate
+
+                    Row {
+                        id: row
+                        visible: !root.dockVertical
+                        spacing: root.spacing
+                        height: root.iconSize
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: root.dockAtTop ? root.topPad : (root.bgHeight - height - root.bottomPad)
+
+                        Repeater {
+                            id: rowRep
+                            model: root.dockVertical ? [] : root.items
+                            delegate: iconDelegate
+                        }
+                    }
+
+                    Column {
+                        id: col
+                        visible: root.dockVertical
+                        spacing: root.spacing
+                        width: root.iconSize
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: root.dockAtLeft ? root.topPad : (root.bgHeight - width - root.bottomPad)
+
+                        Repeater {
+                            id: colRep
+                            model: root.dockVertical ? root.items : []
+                            delegate: iconDelegate
                         }
                     }
                 }
@@ -4556,14 +4703,22 @@ Scope {
                     visible: opacity > 0
                     opacity: ui.menuOpen ? 1 : 0
                     scale: ui.menuOpen ? 1 : 0.96
-                    transformOrigin: Item.Bottom
+                    transformOrigin: root.dockVertical ? Item.Center
+                                                       : (root.dockAtTop ? Item.Top : Item.Bottom)
                     Behavior on opacity { NumberAnimation { duration: 110 } }
                     Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
 
                     width: 230
                     height: menuCol.height + 10
-                    x: Math.max(8, Math.min(ui.width - width - 8, ui.menuCx - width / 2))
-                    y: ui.height - root.margin - root.bgHeight - root.iconSize * (root.effMag - 1) - 14 - height
+                    x: root.dockVertical
+                       ? (root.dockAtLeft ? root.margin + root.bgHeight + 14
+                                          : ui.width - root.margin - root.bgHeight - 14 - width)
+                       : Math.max(8, Math.min(ui.width - width - 8, ui.menuCx - width / 2))
+                    y: root.dockVertical
+                       ? Math.max(8, Math.min(ui.height - height - 8, ui.menuCy - height / 2))
+                       : (root.dockAtTop
+                          ? root.topInset + root.margin + root.bgHeight + root.iconSize * (root.effMag - 1) + 14
+                          : ui.height - root.margin - root.bgHeight - root.iconSize * (root.effMag - 1) - 14 - height)
                     radius: 10
                     color: Qt.rgba(0.14, 0.14, 0.15, 0.62)
                     border.width: 1
