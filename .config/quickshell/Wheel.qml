@@ -39,6 +39,13 @@ PanelWindow {
 
     mask: Region { item: root.showing ? menuRoot : null }
 
+    // map only while open (+260 ms so the fade-out can finish): this overlay
+    // used to sit mapped as a full-screen surface 24/7. Ring/position state
+    // lives in QML items, so the remap looks identical.
+    visible: root.showing || hideTimer.running
+    onShowingChanged: root.showing ? hideTimer.stop() : hideTimer.restart()
+    Timer { id: hideTimer; interval: 260 }
+
     function run(i) {
         if (i < 0 || i >= root.items.length) return
         var a = root.items[i]

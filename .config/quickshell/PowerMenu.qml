@@ -28,8 +28,6 @@ PanelWindow {
     property int menuSize: defaultSize
     property string icon: ""
 
-    Component.onCompleted: BluetoothState.init()
-
     readonly property bool movedFromDefault: offsetX !== 0 || offsetY !== 0 || horizontal || menuSize !== defaultSize
 
     readonly property string iconDir: "file://" + Quickshell.env("HOME") + "/.config/quickshell/imgs/"
@@ -43,6 +41,13 @@ PanelWindow {
     WlrLayershell.keyboardFocus: root.showing ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     mask: Region { item: root.showing ? menuRoot : null }
+
+    // map only while open (+260 ms so the fade-out can finish): this overlay
+    // used to sit mapped as a full-screen surface 24/7. Position/size/hidden
+    // actions live in QML items + JSON state, so the remap looks identical.
+    visible: root.showing || hideTimer.running
+    onShowingChanged: root.showing ? hideTimer.stop() : hideTimer.restart()
+    Timer { id: hideTimer; interval: 260 }
 
     onMenuSizeChanged: if (root.showing) root.setPosition(root.offsetX, root.offsetY)
 
