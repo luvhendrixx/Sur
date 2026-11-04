@@ -1788,6 +1788,14 @@ Scope {
         onTriggered: Quickshell.execDetached(["brightnessctl", "-q", "set", Math.max(1, Math.round(root.brightness * 100)) + "%"])
     }
     function setBrightness(v) { osdQuiet("brightness", 1800); brightness = Math.max(0.01, Math.min(1, v)); brightApply.restart(); }
+    // fn-key step: show the OSD immediately with the predicted value (keys step 5%)
+    // instead of waiting for the brightnessctl -m refresh round-trip (~100ms of dead
+    // time). The refresh lands right after and onBrightnessChanged updates the OSD
+    // in place with the exact value.
+    function brightnessStep(dir) {
+        showOsd("brightness", Math.max(0.01, Math.min(1, brightness + dir * 0.05)));
+        refreshBrightness();
+    }
     onBrightnessChanged: showOsd("brightness", brightness)
     // ═════════════ KEYBOARD LAYOUT ═════════════
     // Hyprland announces every change with an `activelayout` event, so the label updates immediately (no polling).
@@ -2852,13 +2860,17 @@ Scope {
         function screen(): void { root.shotFinish("", ""); }
         function window(): void { root.shotWindow(root.activeWin); }
     }
-    // Hyprland's XF86MonBrightness binds call `qs ipc call brightnessosd show` right
+    // Hyprland's XF86MonBrightness binds call `qs ipc call brightnessosd up|down` right
     // after changing brightness. This handler used to live in the old BrightnessOsd
     // and was never re-wired, so fn-key feedback silently depended on the poll.
-    // Refresh immediately: onBrightnessChanged then pops the OSD with the real value.
+    // The step functions predict the new value (the keys step 5%) so the OSD pops
+    // instantly; the async refresh then corrects it to the exact hardware value.
+    // `show` stays for manual calls: refresh only, OSD pops when the value lands.
     IpcHandler {
         target: "brightnessosd"
         function show(): void { root.refreshBrightness(); }
+        function up(): void { root.brightnessStep(1); }
+        function down(): void { root.brightnessStep(-1); }
     }
     Variants {
         model: root.shotOpen ? Quickshell.screens : []
