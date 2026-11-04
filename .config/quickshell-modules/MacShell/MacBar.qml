@@ -81,9 +81,9 @@ Scope {
 
     // shared helpers from shell.qml (window geometry poller, wallpaper lookup)
     property var hub: null
-    // true while a screen recording / screen share runs: the glass's live window captures sit out (see shell.qml: hub.captureQuiet)
+    // true while a screen recording / screen share runs: the glass capture stops refreshing (see shell.qml: hub.captureQuiet)
     readonly property bool captureQuiet: hub ? hub.captureQuiet : recording
-    // windows opening / closing: the glass's live captures pause (it keeps its last frame; the source stays attached) - see shell.qml: hub.glassHold
+    // windows opening / closing: the glass refresh pauses and keeps its last frame (see shell.qml: hub.glassHold)
     readonly property bool captureHeld: hub ? hub.glassHold : false
 
     // ───────────── CONFIG (all persisted to settings.json) ─────────────
@@ -104,8 +104,8 @@ Scope {
     property real glassLiquid: 1.0
     property real glassBlur: 5
     property real barBgOpacity: 0.10          // fill of the separate "macbarbg" layer (0 = layer hidden). Must stay above the layerrule's ignore_alpha (0.05) for Hyprland to blur it
-    property bool glassRealtime: false      // false = smart mode: window captures go live only while glass is on screen (or the window sits behind it);
-                                            // true = every capture stays live all the time (old behaviour, costs GPU/CPU/RAM around the clock)
+    property bool glassRealtime: false      // true = refresh the glass backdrop more often, so popovers open on fresher pixels (costs more GPU);
+                                            // false = slower refresh while nothing is on screen
     property bool glassDebug: false
     property string wallpaperPath: ""
     property bool use24h: false
@@ -1912,10 +1912,10 @@ Scope {
         return a;
     }
     // ── screen recording ──
-    // A recorder and the glass's live window captures all pull frames from Hyprland; together they made it cut our Wayland
-    // connection ("invalid object NN") and the shell died. So the window captures sit out while recording (hub.captureQuiet),
-    // the recorder starts only after they have settled, and it can never outlive the shell: before, every crash left a
-    // wf-recorder behind that kept recording (that is where the extra wf-recorder processes came from).
+    // A recorder and the glass's screencopy all pull frames from Hyprland; together they made it cut our Wayland connection
+    // ("invalid object NN") and the shell died. So the glass capture pauses while recording (hub.captureQuiet), the recorder
+    // starts only after it has settled, and it can never outlive the shell: before, every crash left a wf-recorder behind
+    // that kept recording (that is where the extra wf-recorder processes came from).
     property bool recRun: false                 // wf-recorder is allowed to run (it follows `recording` after a short delay)
     property real recGuardUntil: 0
     Timer { id: recStartDelay; interval: 900; onTriggered: if (root.recording) root.recRun = true }
@@ -3142,13 +3142,9 @@ Scope {
         return "file://" + encodeURI(p).replace(/#/g, "%23").replace(/\?/g, "%3F");
     }
 
-    // live window geometry for the backdrop (polled only while a glass popover is open)
-    readonly property var monData: hub ? hub.monData : []
-    readonly property var glassClients: hub ? hub.glassClients : []
     property int popCount: 0
     onBarEnabledChanged: { if (!barEnabled) popCount = 0; clipStart(); }
-    Binding { target: root.hub; property: "barWantsGeo"; value: root.liquidActive }
-    // window captures are admitted by the shared gate in shell.qml (hub.tlFor): 0.2 s after a window appears, one every 110 ms
+    // The Liquid Glass backdrop is a monitor capture now, so the shared window-geometry poller is not needed here.
 
     Component.onCompleted: {
         Quickshell.execDetached(["mkdir", "-p", configDir]);
@@ -4062,6 +4058,9 @@ Scope {
                     }
                     return any ? Qt.rect(x0 - 64, y0 - 64, x1 - x0 + 128, y1 - y0 + 128) : Qt.rect(0, 0, 0, 0);
                 }
+                // true while any Liquid Glass surface is on screen (bar popovers, Spotlight, switcher, wallpaper picker).
+                // The glass backdrops refresh their capture only while this is false, so they never capture the shell itself.
+                readonly property bool glassOnScreen: glassRect.width > 0 || spotWin.visible || swWin.visible || wpWin.visible
                 readonly property bool isMenu: ["apple", "app", "file", "edit", "view", "window", "help"].indexOf(pop) >= 0
                 readonly property bool anyVisible: menuPop.visible || cc.visible || cal.visible || wifiPop.visible || btPop.visible || batPop.visible || trayPop.visible || notifPop.visible || toastArea.visible || remPop.visible || remToastArea.visible || volPop.visible || kbPop.visible
                 onAnyVisibleChanged: root.popCount += (anyVisible ? 1 : -1)
@@ -4139,17 +4138,20 @@ Scope {
                 }
                 readonly property var calData: { clock.date; return calCells(); }
 
-                // ── Liquid Glass backdrop: wallpaper + live windows behind the popovers, in screen coordinates ──
-                // The backdrop (wallpaper + one capture per window) used to be built from scratch every time a popover opened,
-                // which is the "wallpaper first, windows a moment later" delay. It now stays alive, so a popover opens on
-                // ready-made, current window pixels.
+                // ── Liquid Glass backdrop: wallpaper + one screen capture behind the popovers, in screen coordinates ──
+                // This used to compose the desktop from one live toplevel capture per window. On Hyprland 0.57.x those
+                // captures die ("Ending recording due to screencopy failure") when a captured window closes, which took
+                // the whole shell down, and hidden special-workspace windows could leak into the glass. A single output /
+                // monitor capture only contains what is actually composited on that monitor, so closed and hidden windows
+                // simply disappear from it instead of breaking the capture. Frames are refreshed only while no glass is
+                // visible anywhere (see ui.glassOnScreen), then frozen, so the glass never refracts the shell's own panels.
                 Loader {
                     id: glassBackdrop
                     active: root.liquidActive
                     sourceComponent: backdropComp
-                    onLoaded: item.region = Qt.binding(function () { return ui.glassRect; })
+                    onLoaded: item.hostShown = true
                 }
-                // keeps the (otherwise unseen) backdrop rendering so its window captures stay valid; draws one 1%-opaque pixel
+                // keeps the (otherwise unseen) backdrop rendering so its capture stays valid; draws one 1%-opaque pixel
                 ShaderEffectSource {
                     sourceItem: glassBackdrop.item
                     hideSource: true
@@ -4163,11 +4165,14 @@ Scope {
                     Item {
                         id: bd
                         property bool hostShown: true      // false while the window hosting this backdrop is hidden (set by its Loader)
-                        property rect region: Qt.rect(0, 0, 0, 0)      // the glass that is on screen right now (set by its Loader); windows behind it stay live while recording
+                        readonly property bool glassOnScreen: ui.glassOnScreen
+                        property bool armed: true          // false for one event loop turn to rebuild a dead capture context
+                        property bool gotFrame: false      // a context that has produced at least one frame is worth rearming
                         x: 0; y: 0
                         width: win.modelData.width
                         height: win.modelData.height
 
+                        // placeholder until the first capture arrives: deliberately colourful so a failure is obvious
                         Rectangle {
                             anchors.fill: parent
                             gradient: Gradient {
@@ -4187,108 +4192,57 @@ Scope {
                             smooth: true
                         }
 
-                        ListModel { id: wm }
-                        Repeater {
-                            model: wm
-                            delegate: Item {
-                                id: gw
-                                required property string addr
-                                required property real wx
-                                required property real wy
-                                required property real ww
-                                required property real wh
-                                required property real wz
-                                required property bool gone      // window closed: capture is released first, the item is swept shortly after
-                                x: wx; y: wy; width: ww; height: wh; z: wz
-                                readonly property var tl: { if (!root.hub || gone) return null; var t = root.hub.tlTick; return root.hub.tlFor(addr); }
-                                // behind the glass that is on screen right now (popover / panel + refraction margin)?
-                                readonly property bool onGlass: bd.region.width > 0 && x < bd.region.x + bd.region.width && x + width > bd.region.x
-                                                                && y < bd.region.y + bd.region.height && y + height > bd.region.y
-                                ScreencopyView {
-                                    id: sv
-                                    anchors.fill: parent
-                                    captureSource: gw.tl
-                                    // While a screen recording / screen share runs the window captures sit out (root.captureQuiet). `hush` follows it
-                                    // with a random 0.6 s spread, so dozens of captures never start or stop in the same instant (that burst, with a
-                                    // recorder pulling frames at the same time, is what the compositor choked on).
-                                    property bool hush: root.captureQuiet
-                                    Connections {
-                                        target: root
-                                        function onCaptureQuietChanged() { hushT.interval = 20 + Math.random() * 600; hushT.restart(); }
-                                    }
-                                    Timer { id: hushT; onTriggered: sv.hush = root.captureQuiet }
-                                    // REAL-TIME vs SMART: with glassRealtime every capture stays live all the time, so a popover opens on
-                                    // frames that are already current and nothing is torn down / restarted when it opens (the restart
-                                    // is what used to show the bare wallpaper first). In the default smart mode, captures go live only
-                                    // while some glass is actually on screen (or the window sits behind the glass region), and the
-                                    // 250 ms single-capture keep-warm below keeps every backdrop current otherwise, so opening a
-                                    // popover still shows ready-made pixels instead of the bare wallpaper.
-                                    // While recording only the windows behind visible glass stay live (so the glass is real-time exactly where you see it,
-                                    // e.g. a video behind the Control Center), every other window sits out.
-                                    live: !gw.gone && !root.captureHeld && bd.hostShown && (!sv.hush || gw.onGlass) && (root.glassRealtime || gw.onGlass || ui.anyVisible || levelOsd.visible || spotWin.visible || swWin.visible || wpWin.visible)
-                                    onCaptureSourceChanged: {
-                                        // a brand-new capture grabs its first frame immediately instead of waiting for the timer
-                                        // (a short delay: asking before the capture context exists only logged "no recording context is ready")
-                                        if (captureSource !== null && !live && !sv.hush && !root.captureHeld) firstShot.restart();
-                                    }
-                                    Timer {
-                                        id: firstShot
-                                        interval: 90
-                                        onTriggered: { if (sv.captureSource !== null && !sv.live && typeof sv.captureFrame === "function") sv.captureFrame(); }
-                                    }
-                                    // single captures: hidden backdrops stay warm once a second (their window goes live the moment it opens);
-                                    // while recording only a backdrop that is actually on screen refreshes, slowly
-                                    // keep-warm timer: DISABLED. It fired captureFrame() on non-live captures, but
-                                    // a ScreencopyView with no recording context rejects every call ("Cannot
-                                    // capture frame"), so in smart mode this was 4 failed GPU attempts/sec +
-                                    // log spam with zero benefit - and under always-live the captures are live,
-                                    // so the timer never ran anyway. Popover fade-in covers the first frames.
-                                    Timer {
-                                        interval: sv.hush ? 1500 : (bd.hostShown ? 250 : 1000); repeat: true
-                                        running: false
-                                        onTriggered: { if (typeof sv.captureFrame === "function") sv.captureFrame(); }
-                                    }
-                                }
+                        ScreencopyView {
+                            id: sv
+                            anchors.fill: parent
+                            // One capture of the whole output. Monitor captures do not die when a window closes and never
+                            // contain hidden workspaces / the scratchpad, unlike the per-toplevel captures this replaced.
+                            captureSource: (bd.hostShown && bd.armed) ? win.modelData : null
+                            live: false
+                            onCaptureSourceChanged: {
+                                bd.gotFrame = false;
+                                if (captureSource !== null) grace.restart();   // let the new context deliver its first frame
+                            }
+                            onHasContentChanged: {
+                                if (hasContent) bd.gotFrame = true;
+                                else if (bd.gotFrame) rearm.restart();         // a failed capture destroyed the context
                             }
                         }
 
-                        function sync() {
-                            var mon = null, i;
-                            for (i = 0; i < root.monData.length; i++)
-                                if (root.monData[i].name === win.modelData.name) mon = root.monData[i];
-                            if (!mon) return;
-                            var ws = [mon.activeWorkspace ? mon.activeWorkspace.id : -999];
-                            if (mon.specialWorkspace && mon.specialWorkspace.id !== 0) ws.push(mon.specialWorkspace.id);
-                            var zoneBottom = bd.height;
-                            var want = {};
-                            var cs = root.glassClients;
-                            for (var c = 0; c < cs.length; c++) {
-                                var cl = cs[c];
-                                if (!cl.mapped || cl.hidden || cl.monitor !== mon.id || ws.indexOf(cl.workspace.id) < 0) continue;
-                                var x = cl.at[0] - mon.x, y = cl.at[1] - mon.y, w = cl.size[0], h = cl.size[1];
-                                if (x + w <= 0 || x >= bd.width || y + h <= 0 || y >= zoneBottom) continue;
-                                var z = cl.floating ? 100 - Math.min(cl.focusHistoryID, 90) : 0;
-                                want[cl.address] = { addr: cl.address, wx: x, wy: y, ww: w, wh: h, wz: z, gone: false };
-                            }
-                            for (var j = wm.count - 1; j >= 0; j--) {
-                                var a = wm.get(j).addr;
-                                if (want[a] === undefined) { if (!wm.get(j).gone) { wm.setProperty(j, "gone", true); sweep.restart(); } }
-                                else { wm.set(j, want[a]); delete want[a]; }
-                            }
-                            for (var k in want) wm.append(want[k]);
-                        }
-                        // a closed window first lets go of its capture (gone → captureSource null), the item itself is removed a moment later
+                        // Single captures. While some glass is on screen the frame is frozen; while nothing is visible it is
+                        // refreshed periodically, so the next popover opens on current pixels. Skipped during screen sharing.
                         Timer {
-                            id: sweep
-                            interval: 600
-                            onTriggered: { for (var q = wm.count - 1; q >= 0; q--) if (wm.get(q).gone) wm.remove(q); }
+                            id: tick
+                            // slightly different phase per backdrop: never start several monitor captures in the same instant
+                            interval: (root.glassRealtime ? 500 : 1500) + Math.round(Math.random() * 300)
+                            repeat: true
+                            // paused while windows churn and during screen recording / sharing; the last frame stays visible
+                            running: bd.hostShown && !bd.glassOnScreen && !root.captureHeld && !root.captureQuiet
+                                     && sv.captureSource !== null
+                            onTriggered: {
+                                if (sv.hasContent) { if (typeof sv.captureFrame === "function") sv.captureFrame(); }
+                                else if (!grace.running) rearm.restart();
+                            }
                         }
-                        Connections {
-                            target: root
-                            function onGlassClientsChanged() { bd.sync(); }
-                            function onMonDataChanged() { bd.sync(); }
+                        // A stopped / failed output capture leaves a context-less view that rejects every captureFrame().
+                        // Detach the source for one turn and attach it again to build a fresh context.
+                        Timer {
+                            id: rearm
+                            interval: bd.gotFrame ? 600 : 1600
+                            onTriggered: { bd.armed = false; Qt.callLater(function () { bd.armed = true; }); }
                         }
-                        Component.onCompleted: sync()
+                        // grace period before the watchdog may rebuild a context that has not delivered its first frame yet
+                        Timer { id: grace; interval: 1200 }
+
+                        // the last glass just closed: grab a fresh frame so the next popover is not one refresh interval stale
+                        onGlassOnScreenChanged: {
+                            if (!glassOnScreen && bd.hostShown && !root.captureHeld && !root.captureQuiet) refreshSoon.restart();
+                        }
+                        Timer {
+                            id: refreshSoon
+                            interval: 300 + Math.round(Math.random() * 300)
+                            onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
+                        }
                     }
                 }
 
@@ -7427,8 +7381,7 @@ Scope {
                     id: swBackdrop
                     active: root.liquidActive          // stays loaded (warm) so the window opens on ready-made frames
                     sourceComponent: backdropComp
-                    onLoaded: { item.hostShown = Qt.binding(function () { return swWin.visible; });
-                                item.region = Qt.binding(function () { return Qt.rect(swPanel.x - 96, swPanel.y - 96, swPanel.width + 192, swPanel.height + 192); }); }
+                    onLoaded: item.hostShown = Qt.binding(function () { return swWin.visible; })
                 }
                 MouseArea { anchors.fill: parent; onPressed: root.swCancel() }      // click outside cancels
 
@@ -7557,8 +7510,7 @@ Scope {
                     id: wpBackdrop
                     active: root.liquidActive          // stays loaded (warm) so the window opens on ready-made frames
                     sourceComponent: backdropComp
-                    onLoaded: { item.hostShown = Qt.binding(function () { return wpWin.visible; });
-                                item.region = Qt.binding(function () { return Qt.rect(wpPanel.x - 96, wpPanel.y - 96, wpPanel.width + 192, wpPanel.height + 192); }); }
+                    onLoaded: item.hostShown = Qt.binding(function () { return wpWin.visible; })
                 }
                 MouseArea { anchors.fill: parent; onPressed: root.wpOpen = false }      // click outside closes
 
@@ -7926,8 +7878,7 @@ Scope {
                     id: spotBackdrop
                     active: root.liquidActive          // stays loaded (warm) so the window opens on ready-made frames
                     sourceComponent: backdropComp
-                    onLoaded: { item.hostShown = Qt.binding(function () { return spotWin.visible; });
-                                item.region = Qt.binding(function () { return Qt.rect(spot.x - 128, spot.y - 128, spot.width + 256, spot.height + 256); }); }
+                    onLoaded: item.hostShown = Qt.binding(function () { return spotWin.visible; })
                 }
 
                 // click outside Spotlight closes it

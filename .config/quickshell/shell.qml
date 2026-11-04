@@ -48,39 +48,39 @@ ShellRoot {
         property var widgets: macWidgets      // desktop widgets (Settings → Widgets reaches them through here)
         function openSettings(pane) { if (macDock) macDock.openPrefs(pane); }
 
-        // set by MacBar / MacDock (Binding elements) when their glass needs live data
+        // set by MacBar / MacDock (Binding elements) when their glass needs current data
         property bool barWantsGeo: false
         property bool dockWantsGeo: false
         property bool barWantsWallpaper: false
         property bool dockWantsWallpaper: false
         property bool widgetsWantWallpaper: false      // set by MacWidgets while a Liquid Glass widget is placed
 
-        // ── screen recording / screen sharing: the window captures sit out ──
-        // A recorder (wf-recorder, a screen share) and the glass's live ScreencopyViews all pull frames from Hyprland at the same
-        // time. With dozens of captures running, the compositor cut the Wayland connection ("invalid object NN") and the shell
-        // crashed. While something records, the glass keeps its last frames (and refreshes slowly, only while a popover is open);
-        // live capture resumes 1.5 s after the recording ends, spread over 0.6 s.
+        // ── screen recording / screen sharing: the glass capture sits out ──
+        // A recorder (wf-recorder, a screen share) and the glass's screencopy all pull frames from Hyprland at the same time,
+        // which in the past cut the Wayland connection ("invalid object NN"). While something records, the glass keeps its last
+        // frame and stops refreshing; refreshing resumes 1.5 s after the recording ends.
         property bool captureQuiet: false
         readonly property bool wantQuiet: macBar.recording || macBar.recRun || macBar.privacy.share.length > 0
         onWantQuietChanged: { if (wantQuiet) { quietRelease.stop(); captureQuiet = true; } else quietRelease.restart(); }
         Timer { id: quietRelease; interval: 1500; onTriggered: sharedHub.captureQuiet = false }
 
         // ── capture hold: the Dock's window PREVIEWS (thumbnails) are not captured while windows are being opened / closed ──
-        // (Liquid Glass backdrops are NOT affected: they capture exactly as in the older version, see tlFor below.)
+        // The Liquid Glass backdrops use one monitor capture now, so they no longer tear anything down here: they only pause
+        // their refresh and keep the last frame (see MacBar.qml / MacDock.qml).
         // Crash: opening / closing many windows quickly ended with
         //   wl_display#1: error 0: invalid object NNN
         // (WAYLAND_DEBUG showed a hyprland_toplevel_export_frame_v1 destroyed by the shell while it was still in flight, i.e. before
         // Hyprland answered ready / failed; the compositor then killed the whole Wayland connection.)
         // Two stages, so an in-flight frame is never aborted:
-        //   stage 1 (captureHold): live capture stops, the current frame finishes;
+        //   stage 1 (captureHold): thumbnail capture stops, the current frame finishes;
         //   stage 2 (captureCut, 0.5 s later): the capture source is released. A short hold never reaches stage 2.
         // The hold starts on every openwindow / closewindow and ends 1.2 s after the last one; the previews then resume.
         // windowCapture = false (Dock Preferences, or  qs ipc call glass captures false) switches the window previews off.
         readonly property bool windowCapture: false      // Dock removed
         property bool churn: false
         readonly property bool captureHold: churn || !windowCapture
-        // Liquid Glass: only stage 1, and only while windows open / close. Live capture pauses (the glass keeps its last frame, the capture
-        // source stays attached, so nothing goes blank), then resumes. Not tied to the previews switch, never cut.
+        // Liquid Glass: only stage 1, and only while windows open / close. Its refresh pauses (the glass keeps its last frame),
+        // then resumes. Not tied to the previews switch, never cut.
         readonly property bool glassHold: churn
         property bool captureCut: false
         onCaptureHoldChanged: { if (captureHold) cutDelay.restart(); else { cutDelay.stop(); captureCut = false; } }
@@ -121,10 +121,10 @@ ShellRoot {
             }
         }
 
-        // ── window capture gate (shared by the Menu Bar and the Dock glass) ──
+        // ── window capture gate (used by the Dock's window thumbnails) ──
         // A window is only handed to a ScreencopyView 0.2 s after it appeared (shorter than the open animation, so nobody sees it),
         // and windows that appear together (opening a batch of apps, a game launcher...) are admitted ONE EVERY 110 ms instead of
-        // all at once. Hyprland answers every live capture with a frame request; starting a dozen of them in the same instant
+        // all at once. Hyprland answers every capture with a frame request; starting a dozen of them in the same instant
         // while a screen recorder is also pulling frames is what made the compositor drop frames and the Wayland connection
         // die ("invalid object NN"). Short-lived dialogs that close while their first frame is in flight are covered by the 0.2 s.
         property int tlTick: 0
