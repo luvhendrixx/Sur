@@ -105,7 +105,7 @@ hl.layer_rule({ name = "macbarbg", match = { namespace = "macbarbg" }, blur = tr
 hl.layer_rule({ name = "macshot",  match = { namespace = "macshot"  }, no_anim = true })   -- optional: no fade on the screenshot picker
 
 -- Settings window (fixed size). Hyprland usually floats it on its own; if it tiles, add a float rule for the title
--- "macshell Settings" (see /usr/share/hypr/hyprland.lua for the window_rule syntax of your version).
+-- "Sur Settings" (see /usr/share/hypr/hyprland.lua for the window_rule syntax of your version).
 
 -- keybinds (the name after -c must match your folder name)
 

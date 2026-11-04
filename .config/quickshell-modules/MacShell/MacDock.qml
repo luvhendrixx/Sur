@@ -522,7 +522,7 @@ Scope {
     // ─────────────────────────── THE WINDOW ───────────────────────────
     Window {
         id: prefsWindow
-        title: "macshell Settings"
+        title: "Sur Settings"
         width: 820
         height: 600
         minimumWidth: 700
@@ -3757,7 +3757,7 @@ Scope {
         if (showThumbs) {
             for (var w = 0; w < tls.length; w++) {
                 var tl = tls[w];
-                if (!tl.appId || tl.title === "macshell Settings") continue;
+                if (!tl.appId || tl.title === "Sur Settings") continue;
                 // live capture off: a preview cell is only an app icon, so a pinned app (its icon is already in the Dock) gets none; unpinned apps keep theirs
                 if (!windowCapture && seen[keyOf(tl.appId)]) continue;
                 var e3 = lookup(tl.appId);
