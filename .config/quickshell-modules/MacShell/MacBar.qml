@@ -1788,7 +1788,16 @@ Scope {
     }
     function setBrightness(v) { osdQuiet("brightness", 1800); brightness = Math.max(0.01, Math.min(1, v)); brightApply.restart(); }
     onBrightnessChanged: showOsd("brightness", brightness)
-    Timer { interval: 850; repeat: true; running: true; onTriggered: root.refreshBrightness() }
+    // Poll is only a safety net for changes made outside the shell (rare): fn keys
+    // announce themselves via the brightnessosd IPC handler, and the control-center
+    // slider drives the value itself. Slow 5s baseline, fast only while the Display
+    // tile is on screen; was a `brightnessctl -m` spawn every 850ms, forever.
+    Timer {
+        interval: ui.pop === "cc" ? 850 : 5000
+        repeat: true
+        running: true
+        onTriggered: root.refreshBrightness()
+    }
     // ═════════════ KEYBOARD LAYOUT ═════════════
     // Hyprland announces every change with an `activelayout` event, so the label updates immediately (no polling).
     // `hyprctl devices` is only read at start-up and after a config reload, to learn which layouts are configured.
@@ -2851,6 +2860,14 @@ Scope {
         function region(): void { root.shotStart(); }
         function screen(): void { root.shotFinish("", ""); }
         function window(): void { root.shotWindow(root.activeWin); }
+    }
+    // Hyprland's XF86MonBrightness binds call `qs ipc call brightnessosd show` right
+    // after changing brightness. This handler used to live in the old BrightnessOsd
+    // and was never re-wired, so fn-key feedback silently depended on the poll.
+    // Refresh immediately: onBrightnessChanged then pops the OSD with the real value.
+    IpcHandler {
+        target: "brightnessosd"
+        function show(): void { root.refreshBrightness(); }
     }
     Variants {
         model: root.shotOpen ? Quickshell.screens : []
