@@ -18,4 +18,15 @@
       "ctrl-e": "editor::MoveToEndOfLine",
     },
   },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "alt-x": "editor::ToggleInlineDiagnostics",
+    },
+  },
+  {
+    "unbind": {
+      "ctrl-q": "zed::Quit"
+    }
+  }
 ]
