@@ -85,6 +85,17 @@ Scope {
     readonly property bool captureQuiet: hub ? hub.captureQuiet : recording
     // windows opening / closing: the glass refresh pauses and keeps its last frame (see shell.qml: hub.glassHold)
     readonly property bool captureHeld: hub ? hub.glassHold : false
+    // bumped on a workspace switch: the frozen Liquid Glass backdrop is re-captured so an open
+    // popover does not keep showing the windows of the workspace you just left (see backdropComp).
+    property int glassRefreshRev: 0
+
+    // Edit → Find…: a small in-shell find field. It forwards Ctrl+F and the typed query to the
+    // window that was focused when the menu opened (see openFind/submitFind), which is how macOS
+    // Find works while the menu itself cannot host the application's own find bar.
+    property bool findOpen: false
+    property string findQuery: ""
+    property string findPending: ""
+    property string findWinAddr: ""
 
     // ───────────── CONFIG (all persisted to settings.json) ─────────────
     property bool barEnabled: true           // false = no menu bar / Spotlight / Control Center at all
@@ -266,9 +277,14 @@ Scope {
 
     function sh(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
     // Log out of Hyprland. 0.55+ (Lua) takes a Lua expression; UWSM sessions are stopped through uwsm so the session ends cleanly.
+    // `uwsm check is-active` is NOT a reliable gate: it is true whenever graphical-session.target is up,
+    // even when uwsm never started this compositor — and a bare `uwsm stop` then *succeeds* with
+    // "Compositor is not running" (exit 0) while the session stays alive, so the fallback never runs.
+    // Gate on the unit uwsm stop would actually act on instead: if no wayland-wm@.service is active
+    // this is not a uwsm session at all, so go straight to the exit dispatcher.
     function logOut() {
-        sh('if command -v uwsm >/dev/null 2>&1 && uwsm check is-active >/dev/null 2>&1; then uwsm stop; '
-           + 'else hyprctl dispatch "hl.dsp.exit()" || hyprctl dispatch exit; fi');
+        sh('if systemctl --user is-active -q "wayland-wm@*.service"; then uwsm stop && exit 0; fi; '
+           + 'exec hyprctl dispatch "hl.dsp.exit()"');
     }
 
     // ═════════════ PALETTE ═════════════
@@ -1872,6 +1888,7 @@ Scope {
                 if (root.kbMain !== "" && d.substring(0, c) !== root.kbMain) return;
                 root.kbSetActive(d.substring(c + 1), undefined);
             } else if (event.name === "configreloaded") root.refreshKeyboardLayout();
+            else if (/^(workspace|focusedmon|activespecial|moveworkspace)/.test(event.name)) root.glassRefreshRev++;
         }
     }
 
@@ -1955,7 +1972,7 @@ Scope {
         if (Date.now() < recGuardUntil) return;          // a double click must not start two recorders
         recGuardUntil = Date.now() + 1500;
         if (!recording) {
-            recordFile = Quickshell.env("HOME") + "/Videos/Screen-Recording-" + Qt.formatDateTime(new Date(), "yyyyMMdd-HHmmss") + ".mp4";
+            recordFile = Quickshell.env("HOME") + "/Pictures/Screenrecordings/Screen-Recording-" + Qt.formatDateTime(new Date(), "yyyyMMdd-HHmmss") + ".mp4";
             recSecs = 0;
             recording = true;                            // the glass captures go quiet right away ...
             recStartDelay.restart();                     // ... and the recorder follows once they have
@@ -2044,6 +2061,45 @@ Scope {
                 root.hlx('hl.dsp.send_shortcut({ mods = "' + m + '", key = "' + k + '"' + wsel + ' })');
             }
         };
+    }
+    // Edit → Find…: the menu cannot draw another application's find bar, so ask the application
+    // to open its own (Ctrl+F) and type the query into it with wtype. The shortcut is sent from
+    // the shell's process after the layer surface has released the keyboard: Hyprland's
+    // send_shortcut can be swallowed by some apps while an exclusive layer still holds focus.
+    function openFind() {
+        var aw = root.activeWin;
+        root.findWinAddr = (aw && aw.address) ? aw.address : "";
+        root.findQuery = "";
+        root.findPending = "";
+        root.findOpen = true;
+    }
+    function cancelFind() {
+        root.findOpen = false;
+        root.findQuery = "";
+        root.findPending = "";
+    }
+    function submitFind() {
+        var q = root.findQuery;
+        root.findOpen = false;
+        root.findPending = q;
+        findSendTimer.restart();
+    }
+    Timer {
+        id: findSendTimer
+        interval: 200
+        onTriggered: {
+            var q = root.findPending;
+            var addr = root.findWinAddr;
+            root.findPending = "";
+            // wtype types into the focused window, so put focus back on the window that was
+            // frontmost when Edit was opened before sending the shortcut. The short sleep in
+            // the shell command gives Hyprland time to apply the focus change.
+            if (addr !== "") Quickshell.execDetached(["hyprctl", "eval",
+                'hl.dispatch(hl.dsp.focus({ window = "address:' + addr + '" }))']);
+            var cmd = 'sleep 0.15; wtype -M ctrl -k f -m ctrl';
+            if (q !== "") cmd += '; sleep 0.28; wtype -- "$1"';
+            Quickshell.execDetached(["sh", "-c", cmd, "sh", q]);
+        }
     }
     function mchk(label, shortcut, checked, run) { return { kind: "item", label: label, shortcut: shortcut || "", run: run, checked: checked === true }; }
     function dis(item, off) { if (off) item.disabled = true; return item; }
@@ -2739,7 +2795,7 @@ Scope {
                     if (browser || editor) m.push(mi("Paste and Match Style", "Ctrl+Shift+V", keys(["ctrl", "shift"], "v")));
                     m.push(mi("Select All", "Ctrl+A", keys(["ctrl"], "a")));
                     m.push(msep());
-                    m.push(mi("Find\u2026", "Ctrl+F", keys(["ctrl"], "f")));
+                    m.push(mi("Find\u2026", "Ctrl+F", function () { root.openFind(); }));
                 }
                 if (has) m.push(msep());
                 m.push(mi("Clipboard History\u2026", "", function () { root.spotOpen("clip"); }));
@@ -3882,17 +3938,19 @@ Scope {
 
             WlrLayershell.namespace: "macbar"
             WlrLayershell.layer: WlrLayer.Top
-            WlrLayershell.keyboardFocus: (ui.pop !== "" && ui.pop !== "spot") ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+            WlrLayershell.keyboardFocus: (root.findOpen || (ui.pop !== "" && ui.pop !== "spot")) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
             mask: Region {
                 item: maskItem
                 Region { item: toastMask }
                 Region { item: remToastMask }
+                Region { item: findMask }
             }
 
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_Escape) {
-                    if (ui.pop === "wifi" && ui.wifiPrompt !== "") { ui.wifiPrompt = ""; }
+                    if (root.findOpen) { root.cancelFind(); }
+                    else if (ui.pop === "wifi" && ui.wifiPrompt !== "") { ui.wifiPrompt = ""; }
                     else if (ui.pop !== "") { ui.pop = ""; }
                     event.accepted = true;
                 }
@@ -3901,6 +3959,13 @@ Scope {
             Item {
                 id: ui
                 anchors.fill: parent
+
+                // briefly hide the bar + open popovers while a workspace-switch backdrop refresh is
+                // captured, so the fresh frame contains the new workspace and not the shell itself.
+                // Fades instead of a hard cut so the momentary blank reads as the space transition.
+                property bool glassRefreshing: false
+                opacity: glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 property string pop: ""          // "", apple, app, file, edit, view, window, help, cc, cal
                 property real menuX: 0
@@ -4058,7 +4123,7 @@ Scope {
                 }
                 // bounding box of all glass that is on screen right now (popovers, notification popups) + a refraction margin
                 readonly property rect glassRect: {
-                    var items = [menuPop, cc, cal, wifiPop, btPop, batPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
+                    var items = [menuPop, cc, cal, wifiPop, btPop, batPop, trayPop, notifPop, toastArea, remPop, remToastArea, volPop, kbPop, levelOsd, findBar], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
                     for (var i = 0; i < items.length; i++) {
                         var it = items[i];
                         if (!it.visible) continue;
@@ -4077,6 +4142,7 @@ Scope {
                     armed = "";
                     wifiPrompt = "";
                     spHoverLabel = "";
+                    if (pop !== "" && root.findOpen) root.cancelFind();
                     if (pop !== "cc") ccEdit = false;
                     root.notifOpen = (pop === "notif");
                     if (root.notifOpen) root.notifUnread = 0;
@@ -4243,6 +4309,53 @@ Scope {
                         // grace period before the watchdog may rebuild a context that has not delivered its first frame yet
                         Timer { id: grace; interval: 1200 }
 
+                        // A workspace switch while a bar popover is open used to leave the frozen capture
+                        // showing the previous workspace ("lag" until the menu was closed and reopened).
+                        // Refresh it in place: hide ALL shell glass (bar + popovers here, and the Spotlight /
+                        // switcher / wallpaper-picker overlays, which fade via ui.glassRefreshing too) for a
+                        // moment, grab two clean frames of the new workspace, then show the glass again on
+                        // top of the second one. The hide is delayed past the start of the workspace slide,
+                        // which runs ~700 ms ("slidefade"), so the second frame lands after it is fully done —
+                        // macOS hides the menu bar while switching Spaces as well.
+                        Connections {
+                            target: root
+                            function onGlassRefreshRevChanged() { bd.refreshForWorkspace(); }
+                        }
+                        function refreshForWorkspace() {
+                            if (!bd.hostShown || root.captureHeld || root.captureQuiet) return;
+                            if (ui.glassRect.width <= 0 || sv.captureSource === null) return;
+                            wsRefreshDelay.restart();
+                        }
+                        Timer {
+                            id: wsRefreshDelay
+                            interval: 180
+                            onTriggered: {
+                                // the popover may have been closed during the delay: don't
+                                // hide the shell for nothing
+                                if (!bd.hostShown || root.captureHeld || root.captureQuiet) return;
+                                if (ui.glassRect.width <= 0 || sv.captureSource === null) return;
+                                ui.glassRefreshing = true; wsShot.restart(); wsShot2.restart(); wsRestore.restart();
+                            }
+                        }
+                        Timer {
+                            id: wsShot
+                            // after the 80 ms fade-out has fully finished: the frame must not catch the shell half-faded
+                            interval: 170
+                            onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
+                        }
+                        // the second grab lands ~1 s after the switch: past any workspace slide animation,
+                        // so the final refraction is the settled new workspace, never a mid-slide frame
+                        Timer {
+                            id: wsShot2
+                            interval: 760
+                            onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
+                        }
+                        Timer {
+                            id: wsRestore
+                            interval: 900
+                            onTriggered: ui.glassRefreshing = false;
+                        }
+
                         // the last glass just closed: grab a fresh frame so the next popover is not one refresh interval stale
                         onGlassOnScreenChanged: {
                             if (!glassOnScreen && bd.hostShown && !root.captureHeld && !root.captureQuiet) refreshSoon.restart();
@@ -4269,6 +4382,121 @@ Scope {
                     visible: ui.pop !== "" && ui.pop !== "spot"
                     acceptedButtons: Qt.AllButtons
                     onPressed: ui.pop = ""
+                }
+
+                // ═════════ Edit → Find… (find field) ═════════
+                // A small Liquid Glass field under the menu bar. Return sends Ctrl+F and the query to
+                // the application that was focused when Edit was opened; Escape closes it.
+                // The layer's input mask must only reserve this area while the field is visible,
+                // otherwise a closed find bar would swallow clicks in the top centre of the screen.
+                Item {
+                    id: findMask
+                    x: findBar.x; y: findBar.y
+                    width: root.findOpen ? findBar.width : 0
+                    height: root.findOpen ? findBar.height : 0
+                }
+                Item {
+                    id: findBar
+                    z: 20
+                    width: Math.min(460, ui.width - 40)
+                    height: 46
+                    x: (ui.width - width) / 2
+                    y: root.barHeight + 8
+                    visible: opacity > 0
+                    opacity: root.findOpen ? 1 : 0
+                    scale: root.findOpen ? 1 : 0.96
+                    transformOrigin: Item.Top
+                    Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                    LGlass {
+                        anchors.fill: parent
+                        backdrop: glassBackdrop.item
+                        shaderUrl: root.glassShaderUrl
+                        liquid: root.liquidActive
+                        dark: root.darkMode
+                        bx: findBar.x; by: findBar.y
+                        cornerR: 23
+                        tint: root.glassOpacity
+                        thickness: 22
+                        strength: 0.7 * root.glassLiquid
+                        rim: root.glassRim
+                        grain: root.glassGrain
+                        blur: root.glassBlur
+                        debug: root.glassDebug
+                        onShaderError: root.glassState = "failed"
+                    }
+                    // swallow clicks inside the field so they never reach the desktop
+                    MouseArea { anchors.fill: parent }
+                    Glyph {
+                        x: 16; anchors.verticalCenter: parent.verticalCenter
+                        width: 18; height: 18
+                        kind: "search"; color: pal.fg2
+                    }
+                    Text {
+                        x: 44
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: findInput.text === ""
+                        text: root.appName !== "" ? "Find in " + root.appName : "Find…"
+                        color: pal.fg3
+                        font.family: pal.fam; font.pixelSize: 15
+                    }
+                    TextInput {
+                        id: findInput
+                        x: 44
+                        width: parent.width - 44 - 44
+                        anchors.verticalCenter: parent.verticalCenter
+                        clip: true
+                        color: pal.fg
+                        selectionColor: root.accent
+                        selectedTextColor: "white"
+                        font.family: pal.fam; font.pixelSize: 15
+                        onTextChanged: if (root.findOpen) root.findQuery = text
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_Escape) { root.cancelFind(); event.accepted = true; }
+                            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submitFind(); event.accepted = true; }
+                        }
+                    }
+                    // close
+                    Item {
+                        anchors.right: parent.right; anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 26; height: 26
+                        Rectangle {
+                            anchors.fill: parent; radius: width / 2
+                            color: Qt.rgba(1, 1, 1, findCloseMa.containsMouse ? 0.18 : 0.10)
+                        }
+                        Glyph {
+                            anchors.centerIn: parent
+                            width: 15; height: 15
+                            kind: "close"; color: pal.fg2
+                        }
+                        MouseArea {
+                            id: findCloseMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.cancelFind()
+                        }
+                    }
+                    Timer {
+                        id: findFocus
+                        interval: 60
+                        onTriggered: findInput.forceActiveFocus()
+                    }
+                    Connections {
+                        target: root
+                        function onFindOpenChanged() {
+                            if (root.findOpen) {
+                                findInput.text = "";
+                                root.findQuery = "";
+                                findFocus.restart();
+                            } else {
+                                findInput.text = "";
+                                root.findQuery = "";
+                            }
+                        }
+                    }
                 }
 
                 // Hardware-key feedback (volume / brightness): a Liquid Glass capsule at the top right, a little below the
@@ -7385,6 +7613,10 @@ Scope {
                 id: swRoot
                 anchors.fill: parent
                 focus: true
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the switcher glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 // releasing ALT switches to the selected app; TAB / SHIFT+TAB / arrows cycle; ESC cancels
                 Keys.onPressed: event => {
@@ -7515,6 +7747,10 @@ Scope {
                 id: wpRoot
                 anchors.fill: parent
                 focus: true
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the wallpaper-picker glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
                 Keys.onEscapePressed: event => { if (root.wpQuery !== "") root.wpQuery = ""; else root.wpOpen = false; event.accepted = true; }
                 Connections {
                     target: root
@@ -7893,6 +8129,10 @@ Scope {
             Item {
                 id: spotRoot
                 anchors.fill: parent
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the Spotlight glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 Loader {
                     id: spotBackdrop
@@ -8716,6 +8956,16 @@ Scope {
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             model: clipPanel.items
+                            // 2× mouse wheel / 2.4× touchpad: the native Qt 6.6 scroll is too slow here
+                            WheelHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (event) => {
+                                    var max = Math.max(0, clipListView.contentHeight - clipListView.height);
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
+                                    clipListView.contentY = Math.max(0, Math.min(max, clipListView.contentY - d));
+                                    event.accepted = true;
+                                }
+                            }
                             Connections {
                                 target: ui
                                 function onSpSelChanged() {
@@ -9011,6 +9261,16 @@ Scope {
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             model: emojiPanel.items
+                            // 2× mouse wheel / 2.4× touchpad: the native Qt 6.6 scroll is too slow here
+                            WheelHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (event) => {
+                                    var max = Math.max(0, emojiGrid.contentHeight - emojiGrid.height);
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
+                                    emojiGrid.contentY = Math.max(0, Math.min(max, emojiGrid.contentY - d));
+                                    event.accepted = true;
+                                }
+                            }
                             Connections {
                                 target: ui
                                 function onSpSelChanged() {
@@ -9150,6 +9410,19 @@ Scope {
                             contentHeight: appsCol.height + 8
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
+
+                            // Qt's native wheel scrolling advances only ~60 px per notch, and since Qt 6.6
+                            // touchpads feel sluggish too. Scroll 2× on a mouse wheel and 2.4× on a
+                            // touchpad (which reports a fine-grained pixelDelta).
+                            WheelHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (event) => {
+                                    var max = Math.max(0, appsFlick.contentHeight - appsFlick.height);
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
+                                    appsFlick.contentY = Math.max(0, Math.min(max, appsFlick.contentY - d));
+                                    event.accepted = true;
+                                }
+                            }
 
                             Column {
                                 id: appsCol

@@ -12,11 +12,9 @@ _A minimal setup focused on a balance of performance, aesthetics, productivity a
 
 ## TL;DR
 
-- Arch + Hyprland (lua config)+ CachyOS kernel + Limine bootloader
+- Arch + Hyprland (lua config) + Limine bootloader
 
-- Nvim using Lazyvim as its "flavour"
-
-- Waybar/Top bar (Quickshell)- Mac-OS like on with the file, edit, view etc stuff you see on and actual Mac,
+- Waybar/Top bar (Quickshell)- Mac-OS like on with the file, edit, view etc stuff you see on an actual Mac,
   and yes, it also 'adapts' to what window your focused on
 
 - Shell - zsh + starship
@@ -26,11 +24,12 @@ _A minimal setup focused on a balance of performance, aesthetics, productivity a
 
 - Btfs file system
 
-- For your Wallpapers, drag and drop them into the `~/Pictures/` dir and you can use the wallpaper picker to set it as your wallpaper
-
-- Custom sciprts - they power the waybar design, aesthetic and other stuff
+- For your Wallpapers, drag and drop them into the `~/Pictures/Wallpapers` directory (created automatically), SUPER + D to open and select your wallpaper
+  (one is already provided by default since you'll boot into a black screen once the install is complete)
 
 - Symlinks for direct and back-to-back reflection(s) if you want to change stuff.
+
+- etc...
 
 ## Installation
 
@@ -41,48 +40,48 @@ chmod +x install.sh
 ./install.sh
 ```
 
+(we recommend keeping this dir in your home directory since the custom update manager is hardcoded to "serve" from this directory. Same as keeping the dotfiles directory name, else update the update.sh file to match your preferences)
+
 This, just to name a few...
 
 - Installs pkgs
 - Links every config
 - setups up stuff like keyd and so on
-- auto-detects your ESP mnt pint and root UUID, sets up the bootloader, registers it in firmware and generates a boot entry for the installed kernel
+- auto-detects your ESP mnt point and root UUID, sets up the bootloader, registers it in firmware and generates a boot entry for the installed kernel (tho you'll be instructed whether to run the install-limine.sh script)
 - follow the small instructions once its done
 
 From there **Reboot** and you ought to be good to go.
 
 ## Keymap (The Essentials)
 
-| Keys                                  | Action                                           |
-| ------------------------------------- | ------------------------------------------------ |
-| `SUPER + T` / `SUPER + Return/Enter`  | Terminal (Kitty)                                 |
-| `SUPER + Q` / `SUPER + W`             | Close window                                     |
-| `SUPER + E` / `SUPER + SHIFT + F`     | Files (Nautilus)                                 |
-| `SUPER + B`                           | Browser (Firefox/Zen)                            |
-| `SUPER + Space`                       | App launcher (rofi)                              |
-| `SUPER + D`                           | Wallpaper picker                                 |
-| `SUPER + S` / `SUPER + ALT + S`       | Scratchpad toggle / send window                  |
-| `SUPER + ,`                           | Dismiss last notification                        |
-| `SUPER + .`                           | Emoji picker (copies directly to focused window) |
-| `SUPER + C` / `SUPER + V`             | Universal copy / paste                           |
-| `SUPER + I`                           | Settings                                         |
-| `SUPER + N`                           | Notifications                                    |
-| `ALT + R`                             | Reminders (view / add / snooze)                  |
-| `SUPER + F`                           | Fullscreen                                       |
-| `SUPER + O`                           | Opacity                                          |
-| `SUPER + H J K L` / arrows            | Focus window                                     |
-| `SUPER + SHIFT + H J K L` / arrows    | Move window                                      |
-| `SUPER + CTRL + H J K L`              | Resize window                                    |
-| `SUPER + 1…0` / `SUPER + SHIFT + 1…0` | Switch / move to workspace                       |
-| `SUPER + /` / `SUPER + ALT + /`       | Zoom in / out                                    |
-| `SUPER + SHIFT + X`                   | Quickshell wheel launcher                        |
-| `SUPER + SHIFT + E`                   | Exit session                                     |
-| `SUPER + L`                           | Lock screen (MacLock)                            |
-| `SUPER + SHIFT + GRAVE(backtick)`     | Power menu                                       |
-| `PRINT`                               | screenshot overlay                               |
-| `Volume / Brightness keys`            | wpctl / brightnessctl (+ OSD)                    |
-| `SUPER + ALT + L`                     | 43PR engine for light/dark toggles               |
-| `SUPER + D`                           | Toggle wallpaper picker                          |
+| Keys                                  | Action                                                      |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `SUPER + T` / `SUPER + Return/Enter`  | Terminal                                                    |
+| `SUPER + Q` / `SUPER + W`             | Close window                                                |
+| `SUPER + E` / `SUPER + SHIFT + F`     | Files (Nautilus)                                            |
+| `SUPER + B`                           | Browser                                                     |
+| `SUPER + Space`                       | App launcher (rofi)                                         |
+| `SUPER + S` / `SUPER + ALT + S`       | Scratchpad toggle / send window                             |
+| `SUPER + .`                           | Emoji picker (copies directly to focused window)            |
+| `SUPER + C` / `SUPER + V`             | Universal copy / paste                                      |
+| `SUPER + I`                           | Settings                                                    |
+| `SUPER + N`                           | Notifications                                               |
+| `ALT + R`                             | Reminders (view / add / snooze)                             |
+| `SUPER + F`                           | Fullscreen                                                  |
+| `SUPER + O`                           | Opacity                                                     |
+| `SUPER + H J K L` / arrows            | Focus window                                                |
+| `SUPER + SHIFT + H J K L` / arrows    | Move window                                                 |
+| `SUPER + CTRL + H J K L`              | Resize window                                               |
+| `SUPER + 1…0` / `SUPER + SHIFT + 1…0` | Switch / move to workspace                                  |
+| `SUPER + /` / `SUPER + ALT + /`       | Zoom in / out (or you can use SUPER + scroll wheel up/down) |
+| `SUPER + SHIFT + X`                   | Quickshell wheel launcher                                   |
+| `SUPER + SHIFT + E`                   | Exit session                                                |
+| `SUPER + L`                           | Lock screen (MacLock)                                       |
+| `SUPER + SHIFT + GRAVE(backtick)`     | Power menu                                                  |
+| `PRINT`                               | screenshot overlay                                          |
+| `Volume / Brightness keys`            | wpctl / brightnessctl (+ OSD)                               |
+| `SUPER + ALT + L`                     | 43PR engine for light/dark toggles                          |
+| `SUPER + D`                           | Toggle wallpaper picker                                     |
 
 Althogh you can click on the **help** button on the waybar to pull up the full cheatsheet
 
@@ -96,11 +95,11 @@ So...
 
 > **DO NOT TRY TO DELETE, MOVE OR HIDE** the `~/dotfiles` directory after installation!!
 
-you'll **break symlinks** and well...trust, its not fun at all setting up your system from scratch
+you'll **break symlinks!!**
 
 ## Updates
 
-As an addon, it has its own script, **sur** that does stuff (see below).
+As an addon, it has its own interactive script, **sur** that does stuff (see below).
 
 ```bash
 Usage:
@@ -138,6 +137,8 @@ sur -s
 sur -F
 ```
 
+Sometimes an update requires a reboot to apply, so keep that in mind.
+
 ### Firmware updates
 
 The setup also keeps an eye on firmware (BIOS/SSD/dock updates from LVFS) so
@@ -147,7 +148,7 @@ it never silently rots behind your package upgrades:
   every `sudo pacman -Syu` / `sur -u` transaction, tells you right in the
   terminal (and with a desktop notification) if firmware updates exist —
   it **never installs anything**, it only reports;
-- `fwupd-refresh.timer` keeps LVFS metadata fresh in the background;
+- `fwupd-refresh.timer` keeps LVFS metadata fresh in the background (disabled by default tho);
 - `sur -F` is the manual lever: refresh, show what's available, and only
   install when you answer `y`. Firmware updates often want a reboot and a
   decent battery, so the choice stays yours.
@@ -169,7 +170,17 @@ So if something breaks, reboot and choose one of the snapshots
 
 It's also 'reasonably' configured in that the snapshots don't "hog" your storage, tho you can use the **btrfs assistant** app that ought to be downloaded for a 'less scary' config incase you want to tweak stuff to your preferences
 
+## Recommendations
+
+- So far, we've tested the setup on almost all linux kernels, and we found the best experience using the cachyOS kernel, so give it a shot. And yes, since we use limine as the bootloader, no need to edit your limine.conf files at all, its all handled automatically unless you cherry pick your system.
+
+- We also recommend using the normal blur over liquid glass for aesthetic reasons as its not quite possible (or we haven't found a solution) to automatically have the liquid glass effect on the macbar and spotlight to automatically use your current workspace background. As in, when you open something from the macbar with the liquid glass effect on, the liquid glass works but try switching workspaces with the macbar content still open. So we recommend just using the normal blur which is quite neat to be honest too.
+
 ## Extras
 
 This setup is based off
 [43PR's dots](https://github.com/43PR/dotfiles) and [O-ss](https://github.com/0-ss/MacShell) on Github. And thank you to both for the incredible and easy to use setup and xp
+
+## Licence
+
+MIT
