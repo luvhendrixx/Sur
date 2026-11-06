@@ -18,14 +18,15 @@ Item {
     readonly property string famDisplay: fam
     readonly property bool leaving: st.unlocking
 
-    // Lock-screen power menu (the gear in the bottom right): sleep, restart, shut down.
-    // No log out — on the lock screen the session can not be left without unlocking anyway,
-    // and locking again would change nothing.
+    // Lock-screen power menu (the gear in the bottom right): sleep, restart, shut down, log out.
+    // Log out ends the session without unlocking (same command as MacBar's Apple menu → Log Out):
+    // a uwsm session is stopped through uwsm, other sessions go through Hyprland's exit dispatcher.
     property bool powerMenuOpen: false
     readonly property var powerActions: [
-        { key: "sleep",    label: "Sleep",     glyph: "moon" },
-        { key: "restart",  label: "Restart",   glyph: "restart" },
-        { key: "shutdown", label: "Shut Down", glyph: "power" }
+        { key: "sleep",     label: "Sleep",     glyph: "moon" },
+        { key: "restart",   label: "Restart",   glyph: "restart" },
+        { key: "shutdown",  label: "Shut Down", glyph: "power" },
+        { key: "logout",    label: "Log Out",   glyph: "logout" }
     ]
     function runPowerAction(key) {
         powerMenuOpen = false;
@@ -35,6 +36,10 @@ Item {
             Quickshell.execDetached(["systemctl", "reboot"]);
         } else if (key === "shutdown") {
             Quickshell.execDetached(["systemctl", "poweroff"]);
+        } else if (key === "logout") {
+            Quickshell.execDetached(["sh", "-c",
+                'if systemctl --user is-active -q "wayland-wm@*.service"; then uwsm stop && exit 0; fi; '
+                + 'exec hyprctl dispatch "hl.dsp.exit()"']);
         }
     }
 
