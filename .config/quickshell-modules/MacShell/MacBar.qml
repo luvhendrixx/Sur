@@ -277,11 +277,13 @@ Scope {
 
     function sh(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
     // Log out of Hyprland. 0.55+ (Lua) takes a Lua expression; UWSM sessions are stopped through uwsm so the session ends cleanly.
-    // `uwsm check is-active` can report true even when this compositor was not launched by uwsm, and a
-    // plain `uwsm stop` then exits non-zero without ever reaching the fallback (the button did nothing).
-    // Always fall through to the Lua exit dispatcher when the UWSM route fails.
+    // `uwsm check is-active` is NOT a reliable gate: it is true whenever graphical-session.target is up,
+    // even when uwsm never started this compositor — and a bare `uwsm stop` then *succeeds* with
+    // "Compositor is not running" (exit 0) while the session stays alive, so the fallback never runs.
+    // Gate on the unit uwsm stop would actually act on instead: if no wayland-wm@.service is active
+    // this is not a uwsm session at all, so go straight to the exit dispatcher.
     function logOut() {
-        sh('if command -v uwsm >/dev/null 2>&1 && uwsm check is-active >/dev/null 2>&1; then uwsm stop && exit 0; fi; '
+        sh('if systemctl --user is-active -q "wayland-wm@*.service"; then uwsm stop && exit 0; fi; '
            + 'exec hyprctl dispatch "hl.dsp.exit()"');
     }
 
