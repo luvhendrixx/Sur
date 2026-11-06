@@ -250,6 +250,29 @@ if [ "$DRY_RUN" = 0 ] && [ "$LINK_ONLY" = 0 ]; then
       warn "couldn't disable NetworkManager-wait-online (fine — purely cosmetic)"
   fi
 
+  # ── Wi-Fi: don't drop the link around sleep ─────────────────────────────
+  # NetworkManager's default power-save makes weak links drop, and after a
+  # suspend the radio sometimes comes back soft-blocked. Disable per-connection
+  # power-save, then force the radio back on (and reconnect the saved profile)
+  # on resume. Profiles also get unlimited autoconnect retries.
+  say "Keeping Wi-Fi stable across sleep"
+  run sudo install -D -m 644 "$REPO_DIR/system/NetworkManager/conf.d/99-wifi-powersave.conf" \
+    /etc/NetworkManager/conf.d/99-wifi-powersave.conf
+  run sudo install -D -m 755 "$REPO_DIR/system/systemd/system-sleep/50-wifi-stability" \
+    /etc/systemd/system-sleep/50-wifi-stability
+  if command -v nmcli >/dev/null 2>&1; then
+    nmcli -t -f UUID,TYPE connection show 2>/dev/null |
+      awk -F: '$2 == "802-11-wireless" { print $1 }' |
+      while IFS= read -r wifi_uuid; do
+        [ -n "$wifi_uuid" ] || continue
+        run nmcli connection modify "$wifi_uuid" connection.autoconnect yes connection.autoconnect-retries 0
+      done
+    run sudo systemctl reload NetworkManager 2>/dev/null ||
+      warn "couldn't reload NetworkManager (the new Wi-Fi settings apply on next start)"
+  else
+    warn "nmcli not found — skipping Wi-Fi profile autoconnect tweaks"
+  fi
+
   say "Setting cursor + icon defaults"
   run gsettings set org.gnome.desktop.interface cursor-theme 'Bibata-Modern-Ice'
   run gsettings set org.gnome.desktop.interface cursor-size 15

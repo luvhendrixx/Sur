@@ -1,0 +1,39 @@
+#!/bin/sh
+# Keeps the Wi-Fi link available across suspend/resume.
+#
+# NetworkManager normally disconnects the radio for suspend. On some machines it
+# comes back soft-blocked or powered off and only reconnects when the user opens
+# the network menu. This hook forces the radio back on and asks NetworkManager to
+# reconnect the saved Wi-Fi profile if it did not do so by itself.
+#
+# $1 is "pre" or "post"; $2 is the sleep operation (suspend, hibernate, ...).
+
+case "$1" in
+pre)
+	# Disable per-device power save where the kernel exposes it. `iw` is optional:
+	# the NetworkManager configuration in 99-wifi-powersave.conf is the main fix.
+	if command -v iw >/dev/null 2>&1; then
+		for dev in /sys/class/net/*/wireless; do
+			[ -e "$dev" ] || continue
+			iface=${dev%/wireless}
+			iface=${iface##*/}
+			iw dev "$iface" set power_save off 2>/dev/null || true
+		done
+	fi
+	;;
+post)
+	if command -v nmcli >/dev/null 2>&1; then
+		nmcli radio wifi on >/dev/null 2>&1 || true
+
+		# Only reconnect when nothing is connected: don't tear down a link that
+		# survived suspend by itself.
+		if ! nmcli -t -f DEVICE,TYPE,STATE dev status 2>/dev/null | grep -q ':wifi:connected$'; then
+			uuid=$(nmcli -t -f UUID,TYPE connection show 2>/dev/null |
+				awk -F: '$2 == "802-11-wireless" { print $1; exit }')
+			[ -n "$uuid" ] && nmcli connection up uuid "$uuid" >/dev/null 2>&1 || true
+		fi
+	fi
+	;;
+esac
+
+exit 0

@@ -18,6 +18,26 @@ Item {
     readonly property string famDisplay: fam
     readonly property bool leaving: st.unlocking
 
+    // Lock-screen power menu (the gear in the bottom right): sleep, restart, shut down.
+    // No log out — on the lock screen the session can not be left without unlocking anyway,
+    // and locking again would change nothing.
+    property bool powerMenuOpen: false
+    readonly property var powerActions: [
+        { key: "sleep",    label: "Sleep",     glyph: "moon" },
+        { key: "restart",  label: "Restart",   glyph: "restart" },
+        { key: "shutdown", label: "Shut Down", glyph: "power" }
+    ]
+    function runPowerAction(key) {
+        powerMenuOpen = false;
+        if (key === "sleep") {
+            Quickshell.execDetached(["systemctl", "suspend"]);
+        } else if (key === "restart") {
+            Quickshell.execDetached(["systemctl", "reboot"]);
+        } else if (key === "shutdown") {
+            Quickshell.execDetached(["systemctl", "poweroff"]);
+        }
+    }
+
     focus: true
 
     // ── entrance: start once the wallpaper is decoded (or after a short timeout), so it never fades in from black
@@ -211,6 +231,112 @@ Item {
                     x: batBody.width + 1 * ls.u; anchors.verticalCenter: batBody.verticalCenter
                     width: 1.6 * ls.u; height: 4.5 * ls.u; radius: 1
                     color: Qt.rgba(1, 1, 1, 0.55)
+                }
+            }
+        }
+    }
+
+    // settings / power menu button (bottom right, out of the way of the status row)
+    Item {
+        id: gearBtn
+        visible: ls.isPrimary
+        opacity: ls.shown && !ls.leaving ? 0.95 : 0
+        Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.OutQuint } }
+        anchors.bottom: parent.bottom; anchors.right: parent.right
+        anchors.bottomMargin: 22 * ls.u; anchors.rightMargin: 22 * ls.u
+        z: 51
+        // snap to whole pixels: a fractional canvas size makes the glyph sit off-center in the bubble
+        width: Math.round(30 * ls.u); height: width
+        Rectangle {
+            anchors.fill: parent; radius: width / 2
+            color: Qt.rgba(1, 1, 1, (gearMa.containsMouse || ls.powerMenuOpen) ? 0.22 : 0.10)
+            Behavior on color { ColorAnimation { duration: 140 } }
+        }
+        Glyph {
+            anchors.centerIn: parent
+            width: Math.round(17 * ls.u); height: width
+            kind: "gear"; color: "white"
+        }
+        MouseArea {
+            id: gearMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { ls.st.poke(); ls.powerMenuOpen = !ls.powerMenuOpen; }
+        }
+    }
+
+    // click-away for the power menu
+    MouseArea {
+        anchors.fill: parent
+        z: 49
+        visible: ls.powerMenuOpen
+        acceptedButtons: Qt.AllButtons
+        onClicked: ls.powerMenuOpen = false
+    }
+
+    // ═════════════ LOCK-SCREEN POWER MENU (gear, bottom right) ═════════════
+    Item {
+        id: powerMenu
+        z: 50
+        width: 232 * ls.u
+        height: powerCol.height + 12 * ls.u
+        anchors.right: parent.right
+        anchors.rightMargin: 22 * ls.u
+        anchors.bottom: parent.bottom
+        // above the gear: its bottom margin (22) + its height (30) + breathing room
+        anchors.bottomMargin: 62 * ls.u
+        visible: opacity > 0
+        opacity: ls.powerMenuOpen ? 1 : 0
+        scale: ls.powerMenuOpen ? 1 : 0.94
+        transformOrigin: Item.BottomRight
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+        Glass {
+            anchors.fill: parent
+            src: glassTex; frame: ls
+            cornerR: 22 * ls.u; thickness: 20; tint: 0.46; shadowAmt: 0.4
+        }
+
+        Column {
+            id: powerCol
+            x: 6 * ls.u; y: 6 * ls.u
+            width: parent.width - 12 * ls.u
+            Repeater {
+                model: ls.powerActions
+                delegate: Item {
+                    id: pa
+                    required property var modelData
+                    width: powerCol.width
+                    height: 38 * ls.u
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 12 * ls.u
+                        color: "white"
+                        opacity: paMa.containsMouse ? 0.16 : 0
+                        Behavior on opacity { NumberAnimation { duration: 100 } }
+                    }
+                    Glyph {
+                        x: 12 * ls.u
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 18 * ls.u; height: width
+                        kind: pa.modelData.glyph; color: "white"
+                    }
+                    Text {
+                        x: 40 * ls.u
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: pa.modelData.label
+                        color: "white"; font.family: ls.fam
+                        font.pixelSize: 14 * ls.u; font.weight: Font.Medium
+                    }
+                    MouseArea {
+                        id: paMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: ls.runPowerAction(pa.modelData.key)
+                    }
                 }
             }
         }
@@ -538,8 +664,39 @@ Item {
                     Text { text: "Notification"; color: Qt.rgba(1, 1, 1, 0.72); font.family: ls.fam; font.pixelSize: 13 * ls.u }
                 }
                 Text {
-                    anchors.right: parent.right; anchors.rightMargin: 14 * ls.u; y: 13 * ls.u
+                    anchors.right: parent.right; anchors.rightMargin: 36 * ls.u; y: 13 * ls.u
                     text: ls.notifAge(nc.time); color: Qt.rgba(1, 1, 1, 0.6); font.family: ls.fam; font.pixelSize: 12 * ls.u
+                }
+                // explicit close: removes just this notification (same MacShell dismiss as the swipe),
+                // while a click on the card body still runs the existing ask-password animation.
+                Item {
+                    id: ncClose
+                    anchors.right: parent.right; anchors.rightMargin: 6 * ls.u
+                    anchors.top: parent.top; anchors.topMargin: 6 * ls.u
+                    width: 22 * ls.u; height: width
+                    z: 2
+                    opacity: (ncMa.containsMouse || ncCloseMa.containsMouse) ? 1 : 0.55
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                    Rectangle {
+                        anchors.fill: parent; radius: width / 2
+                        color: Qt.rgba(1, 1, 1, ncCloseMa.containsMouse ? 0.28 : 0.16)
+                    }
+                    Glyph {
+                        anchors.centerIn: parent
+                        width: 12 * ls.u; height: width
+                        kind: "close"; color: "white"
+                    }
+                    MouseArea {
+                        id: ncCloseMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (nc.gone) return;
+                            flyOff.to = nc.width + 60 * ls.u;
+                            flyOff.restart();
+                        }
+                    }
                 }
                 // one MouseArea for tap AND swipe: it keeps the pointer for the whole drag (preventStealing), and the card
                 // is only cleared when the button is actually released — an interrupted drag springs back
@@ -1759,6 +1916,11 @@ Item {
     Keys.onReleased: event => { if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { if (!event.isAutoRepeat) ls.enterHeld = false; } }
     Keys.onPressed: event => {
         ls.st.poke();
+        if (event.key === Qt.Key_Escape && ls.powerMenuOpen) {
+            ls.powerMenuOpen = false;
+            event.accepted = true;
+            return;
+        }
         if (event.key === Qt.Key_CapsLock) capsSoon.restart();
         if (ls.st.busy || ls.st.unlocking) { event.accepted = true; return; }
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
