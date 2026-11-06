@@ -9,60 +9,62 @@
 {
   "icon_theme": "JetBrains New UI Icons (Dark)",
   "preview_tabs": {
-    "enabled": false
+    "enabled": false,
   },
   "minimap": {
-    "show": "never"
+    "show": "never",
   },
   "cursor_blink": true,
   "autosave": "on_focus_change",
   "format_on_save": "on",
+  "show_inline_diagnostics": true,
   "base_keymap": "VSCode",
   "session": {
-    "trust_all_worktrees": true
+    "trust_all_worktrees": true,
   },
   "project_panel": {
-    "dock": "left"
+    "dock": "left",
   },
   "outline_panel": {
     "button": false,
-    "dock": "left"
+    "dock": "left",
   },
   "collaboration_panel": {
-    "dock": "left"
+    "dock": "left",
   },
   "agent": {
     "button": false,
     "enabled": false,
     "dock": "right",
     "favorite_models": [],
-    "model_parameters": []
+    "model_parameters": [],
   },
   "git_panel": {
-    "dock": "left"
+    "dock": "left",
   },
   "telemetry": {
     "diagnostics": false,
     "metrics": false,
-    "anthropic_retention": false
+    "anthropic_retention": false,
   },
   "ui_font_size": 16,
   "buffer_font_size": 15,
   "theme": {
-    "mode": "system",
+    "mode": "dark",
     "light": "Ayu Light",
-    "dark": "Lumin"
+    "dark": "Lumin",
   },
+
   "languages": {
     "C": {
       "formatter": {
         "external": {
           "command": "clang-format",
           "arguments": [
-            "-style={BasedOnStyle: LLVM, AllowShortFunctionsOnASingleLine: None, IndentWidth: 4}"
-          ]
-        }
-      }
-    }
-  }
+            "-style={BasedOnStyle: LLVM, AllowShortFunctionsOnASingleLine: None, IndentWidth: 4}",
+          ],
+        },
+      },
+    },
+  },
 }
