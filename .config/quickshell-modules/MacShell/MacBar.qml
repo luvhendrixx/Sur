@@ -3959,9 +3959,11 @@ Scope {
                 anchors.fill: parent
 
                 // briefly hide the bar + open popovers while a workspace-switch backdrop refresh is
-                // captured, so the fresh frame contains the new workspace and not the shell itself
+                // captured, so the fresh frame contains the new workspace and not the shell itself.
+                // Fades instead of a hard cut so the momentary blank reads as the space transition.
                 property bool glassRefreshing: false
                 opacity: glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 property string pop: ""          // "", apple, app, file, edit, view, window, help, cc, cal
                 property real menuX: 0
@@ -4335,7 +4337,8 @@ Scope {
                         }
                         Timer {
                             id: wsShot
-                            interval: 70
+                            // after the 80 ms fade-out has fully finished: the frame must not catch the shell half-faded
+                            interval: 170
                             onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
                         }
                         // the second grab lands ~1 s after the switch: past any workspace slide animation,
@@ -7611,6 +7614,7 @@ Scope {
                 // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
                 // frame; the switcher glass must not appear in that frame either
                 opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 // releasing ALT switches to the selected app; TAB / SHIFT+TAB / arrows cycle; ESC cancels
                 Keys.onPressed: event => {
@@ -7744,6 +7748,7 @@ Scope {
                 // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
                 // frame; the wallpaper-picker glass must not appear in that frame either
                 opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
                 Keys.onEscapePressed: event => { if (root.wpQuery !== "") root.wpQuery = ""; else root.wpOpen = false; event.accepted = true; }
                 Connections {
                     target: root
@@ -8125,6 +8130,7 @@ Scope {
                 // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
                 // frame; the Spotlight glass must not appear in that frame either
                 opacity: ui.glassRefreshing ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
 
                 Loader {
                     id: spotBackdrop
