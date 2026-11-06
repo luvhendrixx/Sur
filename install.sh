@@ -240,7 +240,18 @@ if [ "$DRY_RUN" = 0 ] && [ "$LINK_ONLY" = 0 ]; then
   say "Enabling pacman housekeeping"
   run sudo systemctl enable --now paccache-hook.service 2>/dev/null
   run sudo systemctl enable --now pacman-orphans.timer 2>/dev/null
-  run sudo systemctl enable --now fwupd-refresh.timer 2>/dev/null
+
+  # ── fwupd: not worth its boot time here ────────────────────────────────
+  # fwupd-refresh took ~5.5s of userspace boot and fwupd.service (D-Bus
+  # activated) idles at ~80MB on a laptop whose firmware updates go through
+  # the BIOS anyway. Drop both; re-enable fwupd manually before ever needed.
+  say "Trimming firmware-update boot work"
+  if systemctl cat fwupd.service >/dev/null 2>&1; then
+    run sudo systemctl disable --now fwupd-refresh.timer 2>/dev/null ||
+      warn "couldn't disable fwupd-refresh.timer (fine — cosmetic)"
+    run sudo systemctl mask fwupd.service 2>/dev/null ||
+      warn "couldn't mask fwupd.service (fine — cosmetic)"
+  fi
 
   # NetworkManager-wait-online is a synthetic boot dependency: nothing in this
   # setup consumes it, but it serialises the userspace boot behind the network.
