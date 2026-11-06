@@ -4307,9 +4307,12 @@ Scope {
 
                         // A workspace switch while a bar popover is open used to leave the frozen capture
                         // showing the previous workspace ("lag" until the menu was closed and reopened).
-                        // Refresh it in place: hide the shell for two frames, grab a clean frame of the new
-                        // workspace, then show the glass again on top of it. The hide is delayed past the
-                        // workspace animation so the capture does not catch the transition itself.
+                        // Refresh it in place: hide ALL shell glass (bar + popovers here, and the Spotlight /
+                        // switcher / wallpaper-picker overlays, which fade via ui.glassRefreshing too) for a
+                        // moment, grab two clean frames of the new workspace, then show the glass again on
+                        // top of the second one. The hide is delayed past the start of the workspace slide,
+                        // which runs ~700 ms ("slidefade"), so the second frame lands after it is fully done —
+                        // macOS hides the menu bar while switching Spaces as well.
                         Connections {
                             target: root
                             function onGlassRefreshRevChanged() { bd.refreshForWorkspace(); }
@@ -4321,13 +4324,13 @@ Scope {
                         }
                         Timer {
                             id: wsRefreshDelay
-                            interval: 240
+                            interval: 180
                             onTriggered: {
                                 // the popover may have been closed during the delay: don't
                                 // hide the shell for nothing
                                 if (!bd.hostShown || root.captureHeld || root.captureQuiet) return;
                                 if (ui.glassRect.width <= 0 || sv.captureSource === null) return;
-                                ui.glassRefreshing = true; wsShot.restart(); wsRestore.restart();
+                                ui.glassRefreshing = true; wsShot.restart(); wsShot2.restart(); wsRestore.restart();
                             }
                         }
                         Timer {
@@ -4335,9 +4338,16 @@ Scope {
                             interval: 70
                             onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
                         }
+                        // the second grab lands ~1 s after the switch: past any workspace slide animation,
+                        // so the final refraction is the settled new workspace, never a mid-slide frame
+                        Timer {
+                            id: wsShot2
+                            interval: 760
+                            onTriggered: if (sv.hasContent && typeof sv.captureFrame === "function") sv.captureFrame();
+                        }
                         Timer {
                             id: wsRestore
-                            interval: 280
+                            interval: 900
                             onTriggered: ui.glassRefreshing = false;
                         }
 
@@ -7598,6 +7608,9 @@ Scope {
                 id: swRoot
                 anchors.fill: parent
                 focus: true
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the switcher glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
 
                 // releasing ALT switches to the selected app; TAB / SHIFT+TAB / arrows cycle; ESC cancels
                 Keys.onPressed: event => {
@@ -7728,6 +7741,9 @@ Scope {
                 id: wpRoot
                 anchors.fill: parent
                 focus: true
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the wallpaper-picker glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
                 Keys.onEscapePressed: event => { if (root.wpQuery !== "") root.wpQuery = ""; else root.wpOpen = false; event.accepted = true; }
                 Connections {
                     target: root
@@ -8106,6 +8122,9 @@ Scope {
             Item {
                 id: spotRoot
                 anchors.fill: parent
+                // a workspace-switch backdrop refresh blanks the whole shell while it grabs a clean
+                // frame; the Spotlight glass must not appear in that frame either
+                opacity: ui.glassRefreshing ? 0 : 1
 
                 Loader {
                     id: spotBackdrop
@@ -8929,12 +8948,12 @@ Scope {
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             model: clipPanel.items
-                            // 2× mouse wheel / 1.6× touchpad: the native Qt 6.6 scroll is too slow here
+                            // 2× mouse wheel / 2.4× touchpad: the native Qt 6.6 scroll is too slow here
                             WheelHandler {
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (event) => {
                                     var max = Math.max(0, clipListView.contentHeight - clipListView.height);
-                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 1.6 : event.angleDelta.y * 2.0;
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
                                     clipListView.contentY = Math.max(0, Math.min(max, clipListView.contentY - d));
                                     event.accepted = true;
                                 }
@@ -9234,12 +9253,12 @@ Scope {
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             model: emojiPanel.items
-                            // 2× mouse wheel / 1.6× touchpad: the native Qt 6.6 scroll is too slow here
+                            // 2× mouse wheel / 2.4× touchpad: the native Qt 6.6 scroll is too slow here
                             WheelHandler {
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (event) => {
                                     var max = Math.max(0, emojiGrid.contentHeight - emojiGrid.height);
-                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 1.6 : event.angleDelta.y * 2.0;
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
                                     emojiGrid.contentY = Math.max(0, Math.min(max, emojiGrid.contentY - d));
                                     event.accepted = true;
                                 }
@@ -9385,13 +9404,13 @@ Scope {
                             boundsBehavior: Flickable.StopAtBounds
 
                             // Qt's native wheel scrolling advances only ~60 px per notch, and since Qt 6.6
-                            // touchpads feel sluggish too. Scroll 2× on a mouse wheel and 1.6× on a
+                            // touchpads feel sluggish too. Scroll 2× on a mouse wheel and 2.4× on a
                             // touchpad (which reports a fine-grained pixelDelta).
                             WheelHandler {
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (event) => {
                                     var max = Math.max(0, appsFlick.contentHeight - appsFlick.height);
-                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 1.6 : event.angleDelta.y * 2.0;
+                                    var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y * 2.4 : event.angleDelta.y * 2.0;
                                     appsFlick.contentY = Math.max(0, Math.min(max, appsFlick.contentY - d));
                                     event.accepted = true;
                                 }

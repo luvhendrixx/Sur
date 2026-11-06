@@ -87,13 +87,6 @@ zle-line-init() {
 }
 zle -N zle-line-init
 
-# ---------- Lazy-load fzf (only init on first use) ----------
-fzf() {
-  unfunction fzf
-  source <(fzf --zsh)
-  fzf "$@"
-}
-
 export EDITOR="nvim"
 export VISUAL="nvim"
 export LIBVA_DRIVER_NAME=iHD # for intel hardware diagnosis stuff
